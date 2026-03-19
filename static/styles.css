@@ -1,0 +1,342 @@
+/* ========================================== */
+/* ESTILOS DEL WIDGET FLOTANTE DE IA          */
+/* ========================================== */
+
+.ai-widget-container {
+  position: fixed;
+  bottom: 25px;
+  right: 25px;
+  z-index: 9999;
+  font-family: 'Raleway', sans-serif;
+}
+
+.ai-chat-toggle {
+  width: 65px;
+  height: 65px;
+  border-radius: 50%;
+  background-color: #1a3a2a; 
+  color: white;
+  font-size: 30px;
+  border: none;
+  cursor: pointer;
+  box-shadow: 0 6px 16px rgba(0,0,0,0.3);
+  transition: transform 0.3s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ai-chat-toggle:hover {
+  transform: scale(1.1);
+}
+
+.ai-chat-window {
+  position: absolute;
+  bottom: 85px;
+  right: 0;
+  width: 350px;
+  height: 500px;
+  background: #f9f9f9;
+  border-radius: 12px;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  transition: opacity 0.3s ease, transform 0.3s ease;
+  transform-origin: bottom right;
+}
+
+.ai-chat-window.hidden {
+  opacity: 0;
+  transform: scale(0.8) translateY(20px);
+  pointer-events: none;
+}
+
+.ai-chat-topbar {
+  background: #1a3a2a;
+  color: white;
+  padding: 15px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ai-chat-avatar {
+  font-size: 24px;
+}
+
+.ai-chat-info {
+  flex: 1;
+}
+
+.ai-chat-name {
+  font-weight: 700;
+  font-size: 15px;
+}
+
+.ai-chat-status {
+  font-size: 12px;
+  opacity: 0.8;
+}
+
+.ai-chat-close {
+  background: transparent;
+  border: none;
+  color: white;
+  font-size: 16px;
+  cursor: pointer;
+}
+
+.ai-chat-messages {
+  flex: 1;
+  padding: 15px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+.ai-msg {
+  display: flex;
+  gap: 10px;
+  max-width: 85%;
+}
+
+.ai-msg.user {
+  align-self: flex-end;
+  flex-direction: row-reverse;
+}
+
+.ai-msg-avatar {
+  font-size: 20px;
+}
+
+.ai-msg-bubble {
+  padding: 10px 14px;
+  border-radius: 12px;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.ai-msg.bot .ai-msg-bubble {
+  background: white;
+  border: 1px solid #eee;
+  color: #333;
+  border-top-left-radius: 2px;
+}
+
+.ai-msg.user .ai-msg-bubble {
+  background: #1a3a2a;
+  color: white;
+  border-top-right-radius: 2px;
+}
+
+.ai-msg-time {
+  font-size: 10px;
+  color: #888;
+  margin-top: 4px;
+  text-align: right;
+}
+
+.ai-msg.user .ai-msg-time {
+  text-align: left;
+}
+
+.ai-chat-input-bar {
+  padding: 15px;
+  background: white;
+  border-top: 1px solid #eee;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+#ai-chat-input {
+  flex: 1;
+  border: 1px solid #ddd;
+  border-radius: 20px;
+  padding: 10px 15px;
+  font-family: inherit;
+  font-size: 14px;
+  resize: none;
+  outline: none;
+}
+
+#ai-chat-input:focus {
+  border-color: #1a3a2a;
+}
+
+#ai-chat-send {
+  background: #1a3a2a;
+  color: white;
+  border: none;
+  border-radius: 50%;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 16px;
+}
+
+#ai-chat-send:hover {
+  background: #2c5a42;
+}
+
+/* ========================================== */
+/* ANIMACIÓN DE "ESCRIBIENDO..."              */
+/* ========================================== */
+
+.ai-typing-indicator {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 14px 16px;
+  background: white;
+  border: 1px solid #eee;
+  border-radius: 12px;
+  border-top-left-radius: 2px;
+  width: fit-content;
+}
+
+.ai-typing-dot {
+  width: 7px;
+  height: 7px;
+  background-color: #1a3a2a; 
+  border-radius: 50%;
+  animation: typingBounce 1.4s infinite ease-in-out both;
+}
+
+.ai-typing-dot:nth-child(1) { animation-delay: -0.32s; }
+.ai-typing-dot:nth-child(2) { animation-delay: -0.16s; }
+
+@keyframes typingBounce {
+  0%, 80%, 100% { transform: scale(0); opacity: 0.5; }
+  40% { transform: scale(1); opacity: 1; }
+} 
+
+/* ========================================== */
+/* ESTILOS PARA EL MARKDOWN DE LA IA          */
+/* ========================================== */
+
+.ai-msg-bubble p {
+  margin: 0 0 8px 0;
+}
+
+.ai-msg-bubble p:last-child {
+  margin-bottom: 0;
+}
+
+.ai-msg-bubble ul, 
+.ai-msg-bubble ol {
+  margin: 8px 0;
+  padding-left: 20px;
+}
+
+.ai-msg-bubble li {
+  margin-bottom: 4px;
+}
+
+.ai-msg-bubble strong {
+  color: #111; 
+  font-weight: 700;
+}
+
+/* Si tienes modo oscuro, asegúrate de que el texto de la IA sea legible */
+.ai-msg.user .ai-msg-bubble p,
+.ai-msg.user .ai-msg-bubble strong,
+.ai-msg.user .ai-msg-bubble li {
+  color: white;
+} 
+
+/* ============================================================
+   🎙️ BOTONES DE CONTROL (CERO FONDOS, CERO BORDES)
+   ============================================================ */
+
+/* Aplicamos transparencia forzada usando sus IDs exactos */
+#ai-toggle-speaker,
+#ai-chat-mic {
+    background: transparent !important;
+    background-color: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    outline: none !important;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    -webkit-appearance: none !important;
+    appearance: none !important;
+    padding: 5px 10px;
+    margin: 0;
+}
+
+/* Tamaño y color base de los iconos */
+#ai-toggle-speaker i,
+#ai-chat-mic i {
+    font-size: 1.3rem !important;
+    transition: all 0.3s ease;
+    font-family: "Font Awesome 6 Free" !important; 
+    font-weight: 900 !important;
+}
+
+/* --- ESTADOS MUTEADOS (GRIS) --- */
+#ai-toggle-speaker.muted i,
+#ai-chat-mic.muted i {
+    color: #a0a0a0 !important;
+    opacity: 0.7;
+}
+
+/* --- ESTADO ACTIVO BOCINA (VERDE NEÓN) --- */
+#ai-toggle-speaker:not(.muted) i {
+    color: #00ff88 !important;
+    filter: drop-shadow(0 0 6px rgba(0, 255, 136, 0.6));
+}
+
+/* --- ESTADO ACTIVO MICROFONO (ROJO PULSANTE) --- */
+#ai-chat-mic.recording i {
+    color: #ff4b4b !important;
+    animation: pulse-red 1.5s infinite;
+}
+
+@keyframes pulse-red {
+    0% { transform: scale(1); filter: drop-shadow(0 0 0px rgba(255, 75, 75, 0)); }
+    50% { transform: scale(1.15); filter: drop-shadow(0 0 8px rgba(255, 75, 75, 0.7)); }
+    100% { transform: scale(1); filter: drop-shadow(0 0 0px rgba(255, 75, 75, 0)); }
+}
+
+/* ========================================== */
+/* 🎙️ ANIMACIÓN DE ONDAS DE SONIDO (LOADING) */
+/* ========================================== */
+
+.ai-msg-wave-dots {
+    display: flex;
+    align-items: center;
+    gap: 4px; 
+    justify-content: center;
+    padding: 2px 0;
+}
+
+.ai-msg-wave-dot {
+    width: 6px;
+    height: 6px;
+    background-color: rgba(255, 255, 255, 0.7); 
+    border-radius: 50%; 
+    animation: wave-dots 1.5s infinite ease-in-out;
+}
+
+.ai-msg-wave-dot:nth-child(2) { animation-delay: 0.2s; }
+.ai-msg-wave-dot:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes wave-dots {
+    0%, 80%, 100% { transform: scale(0.6); opacity: 0.5; }
+    40% { transform: scale(1); opacity: 1; }
+}
+
+/* Estilo para la burbuja temporal del usuario */
+.ai-msg.user .ai-msg-bubble.loading-bubble {
+    background-color: rgba(26, 26, 26, 0.8); 
+    min-width: 50px;
+    text-align: center;
+}

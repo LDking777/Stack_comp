@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Login - REVENGE AI</title>
+    <link
+      href="https://fonts.googleapis.com/css2?family=Raleway:wght@300;400;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"
+    />
+    <style>
+      body {
+        font-family: "Raleway", sans-serif;
+        background-color: #f3f4f6;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        height: 100vh;
+        margin: 0;
+      }
+      .login-card {
+        background: white;
+        padding: 40px;
+        border-radius: 12px;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05);
+        width: 100%;
+        max-width: 380px;
+      }
+      .title {
+        color: #111827;
+        font-size: 28px;
+        font-weight: 700;
+        margin-top: 0;
+        margin-bottom: 30px;
+        text-align: center;
+      }
+      
+      /* 🛡️ ESTILO MEJORADO PARA EL ERROR */
+      .error-message {
+        background-color: #fee2e2;
+        color: #dc2626;
+        border: 1px solid #f87171;
+        padding: 10px;
+        border-radius: 8px;
+        font-size: 14px;
+        text-align: center;
+        margin-bottom: 20px;
+        font-weight: 600;
+      }
+
+      .input-group {
+        margin-bottom: 15px;
+      }
+      .input-group input {
+        width: 100%;
+        padding: 12px 15px;
+        border: 1px solid #d1d5db;
+        border-radius: 8px;
+        font-size: 14px;
+        font-family: "Raleway", sans-serif;
+        box-sizing: border-box;
+        outline: none;
+        transition: border-color 0.3s;
+      }
+      .input-group input:focus {
+        border-color: #3b82f6;
+      }
+
+      .btn-primary {
+        width: 100%;
+        background-color: #3b82f6;
+        color: white;
+        padding: 12px;
+        border: none;
+        border-radius: 8px;
+        font-size: 16px;
+        font-weight: 600;
+        cursor: pointer;
+        font-family: "Raleway", sans-serif;
+        margin-bottom: 15px;
+        transition: background 0.3s;
+      }
+      .btn-primary:hover {
+        background-color: #2563eb;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="login-card">
+      <h1 class="title">Bienvenido</h1>
+      
+      {% if error %}
+      <div class="error-message">
+        <i class="fa-solid fa-triangle-exclamation"></i> {{ error }}
+      </div>
+      {% endif %}
+      
+      <form action="/login" method="POST">
+        <div class="input-group">
+          <input type="text" name="user_name" placeholder="Usuario" required autocomplete="off" />
+        </div>
+        <div class="input-group">
+          <input
+            type="password"
+            name="password"
+            placeholder="Contraseña"
+            required
+          />
+        </div>
+
+        <button type="submit" class="btn-primary">Sign in</button>
+      </form>
+    </div>
+  </body>
+</html>
