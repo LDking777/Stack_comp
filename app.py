@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 from openai import OpenAI
 import threading
 import requests
+from datetime import datetime # 🕒 Corregido: Importación de hora añadida
 
 # 1. CARGA DE CONFIGURACIÓN
 load_dotenv()
@@ -202,12 +203,17 @@ def chat():
     
     if not message: return jsonify({'error': 'Mensaje vacío'}), 400
 
+    # 1. Prioridad: Knowledge Base (Respuestas fijas)
     fixed = get_fixed_response(message)
     if fixed:
         return jsonify({'source': 'kb', 'response': fixed, 'time_taken': round(time.time()-start_time, 2)})
 
+    # 2. IA con Contexto de Datos y Hora Actual
     datos_cloud = consultar_datos_cloud()
-    PROMPT_DINAMICO = SYSTEM_PROMPT + datos_cloud
+    
+    # 🕒 Inyección de fecha y hora actual para el motor de IA
+    fecha_actual = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    PROMPT_DINAMICO = f"INFO DE SISTEMA: La fecha y hora actual es {fecha_actual}.\n\n" + SYSTEM_PROMPT + datos_cloud
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
         futures = {
@@ -232,4 +238,5 @@ def chat():
 
 if __name__ == '__main__':
     port_num = int(os.getenv('PORT', 5000))
+    # use_reloader=False para evitar que el bot de Telegram se ejecute dos veces
     app.run(host='0.0.0.0', port=port_num, debug=True, use_reloader=False)
