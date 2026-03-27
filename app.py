@@ -47,22 +47,33 @@ MAX_SESIONES = 3
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-# --- 🧠 PROMPT DE NEXO IA (ACTUALIZADO PARA MULTITABLA) ---
+# --- 🧠 PROMPT DE NEXO IA ---
 SYSTEM_PROMPT = (
     "Eres 'NEXO IA', el núcleo de inteligencia analítica de CloudLabs. "
     "Tu especialidad es conectar datos de métricas web con estrategias de marketing. "
     "Tienes acceso a dos fuentes de datos en tiempo real de Supabase:\n"
     "1. 'metricas_marketing': Enfocada en eventos como Dead Clicks y Rage Clicks por URL.\n"
-    "2. 'grabaciones_analisis': Enfocada en comportamiento de usuario, países, engagement score y frustración.\n\n"
+    "2. 'grabaciones_analisis': Enfocada en comportamiento de usuario, países, páginas vistas y tiempos.\n\n"
     "REGLAS:\n"
     "1. Cruza los datos de ambas tablas para dar insights profundos.\n"
     "2. Si un país tiene bajo engagement y alta frustración, destaca ese problema.\n"
-    "3. Tu tono es profesional, ejecutivo y basado 100% en evidencia."
+    "3. Si el usuario pide un cálculo (promedios, sumas), usa los datos numéricos exactos del reporte para hacerlo.\n"
+    "4. Tu tono es profesional, ejecutivo y basado 100% en evidencia."
 )
 
-# --- ☁️ CONEXIÓN A SUPABASE (MULTITABLA) ---
+# --- CACHÉ SIMPLE PARA SUPABASE ---
+CACHE_CONTEXTO = ""
+ULTIMA_ACTUALIZACION = 0
+TIEMPO_CACHE = 120 # Segundos (2 minutos)
+
+# --- ☁️ CONEXIÓN A SUPABASE OPTIMIZADA ---
 def consultar_datos_cloud():
-    """Consulta ambas tablas en Supabase y genera un contexto unificado"""
+    global CACHE_CONTEXTO, ULTIMA_ACTUALIZACION
+    
+    # Retornar caché si aún es válido
+    if time.time() - ULTIMA_ACTUALIZACION < TIEMPO_CACHE and CACHE_CONTEXTO:
+        return CACHE_CONTEXTO
+
     SUPABASE_URL = os.getenv("SUPABASE_URL")
     SUPABASE_KEY = os.getenv("SUPABASE_KEY")
     
@@ -73,34 +84,65 @@ def consultar_datos_cloud():
     try:
         headers = {
             "apikey": SUPABASE_KEY,
-            "Authorization": f"Bearer {SUPABASE_KEY}"
+            "Authorization": f"Bearer {SUPABASE_KEY}",
+            "Content-Type": "application/json"
         }
         
-        # Consulta 1: Métricas de Marketing
+        # Consultas (Limitamos a 15 para no saturar)
         resp_mkt = requests.get(f"{SUPABASE_URL}/rest/v1/metricas_marketing?select=*&limit=15", headers=headers)
-        # Consulta 2: Grabaciones y Comportamiento
         resp_grab = requests.get(f"{SUPABASE_URL}/rest/v1/grabaciones_analisis?select=*&limit=15", headers=headers)
         
         contexto = "\n\n--- [BASE DE CONOCIMIENTO EN VIVO: NEXO IA] ---\n"
 
+        # 1. MANEJO DE TABLA: METRICAS MARKETING
         if resp_mkt.status_code == 200:
             datos_mkt = resp_mkt.json()
-            contexto += "\n📌 DATOS DE MARKETING Y FRUSTRACIÓN:\n"
+            contexto += "\n📌 DATOS DE MARKETING Y EVENTOS (DeadClicks, RageClicks):\n"
             for f in datos_mkt:
-                contexto += f"- URL: {f.get('Url')} | {f.get('metricName')}: {f.get('sessionsWithMetricPercentage')}% | Total: {f.get('subTotal')}\n"
+                url = f.get('Url', 'Sin URL')
+                metrica = f.get('metricName', 'Desconocida')
+                porcentaje = f.get('sessionsWithMetricPercentage', 0.0)
+                sesiones = f.get('sessionsCount', 0.0)
+                dispositivo = f.get('Device', 'N/A')
+                sistema_op = f.get('OS', 'N/A')
+                
+                contexto += f"- Métrica: {metrica} | Afecta al {porcentaje}% | URL: {url} | Dispositivo: {dispositivo} ({sistema_op}) | Sesiones Totales: {sesiones}\n"
+        else:
+            print(f"❌ Error Supabase (metricas): {resp_mkt.status_code} - {resp_mkt.text}")
 
+        # 2. MANEJO DE TABLA: GRABACIONES ANALISIS (Con páginas vistas y duración agregadas)
         if resp_grab.status_code == 200:
             datos_grab = resp_grab.json()
             contexto += "\n📌 DATOS DE COMPORTAMIENTO POR SESIÓN:\n"
             for g in datos_grab:
-                frustracion = "Alta" if g.get('posible_frustracion') == 1 else "Baja"
-                contexto += f"- Origen: {g.get('pais')} | URL Entrada: {g.get('direccion_url_entrada')} | Engagement: {g.get('standarized_engagement_score')} | Frustración: {frustracion}\n"
+                fecha = g.get('fecha', 'Sin fecha')
+                hora = g.get('hora', 'Sin hora')
+                pais = g.get('pais', 'Desconocido')
+                dispositivo = g.get('dispositivo', 'N/A')
+                url_entrada = g.get('direccion_url_entrada', 'N/A')
+                engagement = g.get('standarized_engagement_score', 'N/A')
+                
+                # Campos para hacer cálculos matemáticos
+                paginas = g.get('recuento_paginas', 0)
+                duracion = g.get('duracion_sesion_segundos', 0)
+                
+                frust = g.get('posible_frustracion')
+                frustracion = "Alta" if str(frust) == '1' else "Baja"
+                
+                contexto += f"- Fecha: {fecha} a las {hora} | País: {pais} ({dispositivo}) | Entrada: {url_entrada} | Páginas Vistas: {paginas} | Duración: {duracion}s | Engagement: {engagement} | Frustración: {frustracion}\n"
+        else:
+            print(f"❌ Error Supabase (grabaciones): {resp_grab.status_code} - {resp_grab.text}")
         
         contexto += "\n--- FIN DEL REPORTE ---\n"
+        
+        # Guardar en caché
+        CACHE_CONTEXTO = contexto
+        ULTIMA_ACTUALIZACION = time.time()
+        
         return contexto
 
     except Exception as e:
-        print(f"⚠️ Error Nexo Data Multi-table: {e}")
+        print(f"⚠️ Error crítico en Nexo Data: {e}")
         return ""
 
 # --- RUTAS ---
@@ -110,10 +152,12 @@ def login():
     if 'logged_in' in session: return redirect(url_for('index'))
     if request.method == 'POST':
         if request.form.get('user_name') == USUARIO_ADMIN and request.form.get('password') == PASSWORD_ADMIN:
-            if sesiones_activas >= MAX_SESIONES: return render_template('login.html', error="Límite alcanzado.")
+            if sesiones_activas >= MAX_SESIONES: return render_template('login.html', error="Límite de sesiones activas alcanzado.")
             session['logged_in'] = True
             sesiones_activas += 1
             return redirect(url_for('index'))
+        else:
+            return render_template('login.html', error="Credenciales incorrectas.")
     return render_template('login.html')
 
 @app.route('/logout')
@@ -132,8 +176,12 @@ def index():
 @app.route('/transcribe', methods=['POST'])
 def transcribe():
     if 'logged_in' not in session: return jsonify({"error": "No autorizado"}), 401
-    audio_file = request.files.get('audio')
-    if not audio_file: return jsonify({"error": "No audio"}), 400
+    
+    if 'audio' not in request.files: return jsonify({"error": "No se envió archivo de audio"}), 400
+    audio_file = request.files['audio']
+    
+    if audio_file.filename == '': return jsonify({"error": "Archivo vacío"}), 400
+    
     try:
         transcript = client.audio.transcriptions.create(
             model="whisper-1", 
@@ -141,22 +189,23 @@ def transcribe():
         )
         return jsonify({"text": transcript.text})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        print(f"Error en transcripción: {e}")
+        return jsonify({"error": "Fallo al procesar el audio"}), 500
 
 @app.route('/chat', methods=['POST'])
 def chat():
     if 'logged_in' not in session: return jsonify({"error": "No autorizado"}), 401
+    
     start_time = time.time()
     data = request.get_json() or {}
     message = data.get('message', '').strip()
     
-    if not message: return jsonify({'error': 'vacio'}), 400
+    if not message: return jsonify({'error': 'Mensaje vacío'}), 400
 
     fixed = get_fixed_response(message)
     if fixed:
         return jsonify({'source': 'kb', 'response': fixed, 'time_taken': round(time.time()-start_time, 2)})
 
-    # NEXO IA obtiene datos cruzados de ambas tablas
     datos_cloud = consultar_datos_cloud()
     PROMPT_DINAMICO = SYSTEM_PROMPT + datos_cloud
 
@@ -166,18 +215,21 @@ def chat():
             ex.submit(call_gemini, message, PROMPT_DINAMICO): 'Gemini'
         }
         try:
-            for fut in concurrent.futures.as_completed(futures, timeout=20):
+            for fut in concurrent.futures.as_completed(futures, timeout=15):
                 resp = fut.result()
-                if resp and not resp.startswith("Error"):
+                if resp and not str(resp).startswith("Error"):
                     return jsonify({
                         'source': futures[fut].lower(), 
                         'response': resp, 
                         'time_taken': round(time.time() - start_time, 2)
                     })
+        except concurrent.futures.TimeoutError:
+            return jsonify({'error': 'Tiempo de espera agotado de las IAs'}), 504
         except Exception as e:
             print(f"Error en el motor de IA: {e}")
-            return jsonify({'error': 'error'}), 502
+            
+    return jsonify({'error': 'Ambos modelos de IA fallaron al procesar la solicitud.'}), 502
 
 if __name__ == '__main__':
     port_num = int(os.getenv('PORT', 5000))
-    app.run(host='0.0.0.0', port=port_num, debug=False, use_reloader=False)
+    app.run(host='0.0.0.0', port=port_num, debug=True, use_reloader=False)
