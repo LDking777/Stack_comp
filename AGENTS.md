@@ -206,7 +206,7 @@ Configuracion real del servicio en Render (hoy en el dashboard, no sincronizada 
 
 En Vercel: `VITE_API_URL=https://stack-comp.onrender.com` sin `/` final, y todo cambio de variable exige redeploy (ver trampa 8).
 
-Hay dos remotos: `origin` (`LDking777/api-service-v2`, donde `main` todavia es el v1 Flask) y `stack` (`LDking777/Stack_comp`, la fuente real de deploy). El codigo que importa se empuja a `stack/pdn_qa`.
+Hay dos remotos, hoy sincronizados ambos en v2: `origin` (`LDking777/api-service-v2`, rama `main`, que hasta el 2026-10-08 todavia era el v1 Flask) y `stack` (`LDking777/Stack_comp`, la fuente real de deploy). El deploy sale de `stack/pdn_qa`, que va en fast-forward con `developer`. Antes de empujar, comprueba que `stack/pdn_qa` y `origin/main` tengan el mismo commit si tocas ambos.
 
 Verificacion posterior al deploy:
 
