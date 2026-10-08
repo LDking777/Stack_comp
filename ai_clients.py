@@ -12,12 +12,12 @@ def call_openai(message, system_prompt):
         
         client = OpenAI(api_key=api_key)
         response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
+            model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": message}
             ],
-            timeout=8
+            timeout=15
         )
         return response.choices[0].message.content
     except Exception as e:

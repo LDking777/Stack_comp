@@ -1,0 +1,118 @@
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+/* ==========================================================================
+   CALDAS 5.0 — Design Tokens
+   Design: macOS Light · materiales translúcidos (vibrancy) + hairline borders
+   ========================================================================== */
+
+:root {
+  color-scheme: light;
+
+  /* ── Superficies (materiales macOS) ── */
+  --bg-deep:        #f2f2f7;          /* canvas de la ventana */
+  --bg-shell:       #ececed;          /* body principal */
+  --bg-sidebar:     rgba(246, 246, 248, 0.72);   /* sidebar vibrancy */
+  --bg-card:        rgba(255, 255, 255, 0.78);   /* tarjetas */
+  --bg-card-hover:  rgba(255, 255, 255, 0.94);
+  --bg-header:      rgba(250, 250, 252, 0.72);   /* topbar */
+  --bg-chat:        rgba(252, 252, 253, 0.88);   /* popup del chat */
+  --bg-popover:     rgba(252, 252, 253, 0.94);   /* menus desplegables */
+  --bg-material-bar: rgba(248, 248, 250, 0.78);  /* barras de chrome */
+  --bg-bubble-user: rgba(255, 255, 255, 0.92);   /* burbuja del usuario */
+  --bg-input:       rgba(120, 120, 128, 0.08);   /* campos de texto */
+  --bg-fill-hover:  rgba(120, 120, 128, 0.16);   /* relleno neutro en hover */
+  --bg-elevated:    #ffffff;
+
+  /* ── Hairlines / separadores ── */
+  --border-default: rgba(0, 0, 0, 0.09);
+  --border-card:    rgba(0, 0, 0, 0.08);
+  --border-sidebar: rgba(0, 0, 0, 0.10);
+  --border-strong:  rgba(0, 0, 0, 0.16);
+
+  /* ── Acento: systemBlue ── */
+  --blue-vivid:     #0071e3;
+  --blue-bright:    #007aff;
+  --blue-cyan:      #32ade6;
+  --blue-subtle:    rgba(0, 122, 255, 0.10);
+  --blue-badge:     rgba(0, 122, 255, 0.12);
+  --blue-border:    rgba(0, 122, 255, 0.26);
+  --blue-border-strong: rgba(0, 122, 255, 0.42);
+  --blue-ring:      rgba(0, 122, 255, 0.30);
+  --blue-shadow:    rgba(0, 76, 170, 0.18);
+  --blue-grad:      linear-gradient(135deg, #0a84ff, #0060df);
+  --blue-grad-deep: linear-gradient(135deg, #0060df, #0050b3);
+
+  /* ── Escala de tinte azul (fills) ── */
+  --tint-1: rgba(0, 122, 255, 0.06);   /* fila en reposo */
+  --tint-2: rgba(0, 122, 255, 0.10);   /* chip / reposo */
+  --tint-3: rgba(0, 122, 255, 0.14);   /* hover */
+  --tint-4: rgba(0, 122, 255, 0.20);   /* hover fuerte / seleccionado */
+  --tint-5: rgba(0, 122, 255, 0.26);   /* burbuja del asistente */
+
+  /* ── Colores de estado (semáforo del sistema) ── */
+  --green-active:   #1f9d55;
+  --green-subtle:   rgba(31, 157, 85, 0.12);
+  --green-border:   rgba(31, 157, 85, 0.28);
+
+  --amber-warn:     #b06f00;
+  --amber-subtle:   rgba(255, 149, 0, 0.14);
+  --amber-border:   rgba(255, 149, 0, 0.30);
+
+  --red-danger:     #d70015;
+  --red-badge:      #ff3b30;
+  --red-subtle:     rgba(255, 59, 48, 0.10);
+  --red-tint:       rgba(255, 59, 48, 0.05);
+  --red-border:     rgba(255, 59, 48, 0.24);
+
+  /* ── Texto (escala systemGray) ── */
+  --text-primary:   #1c1c1e;
+  --text-secondary: #6b6b70;
+  --text-muted:     #9a9aa0;
+  --text-label:     #86868b;
+  --text-invert:    #ffffff;
+
+  /* ── Sombras (elevación macOS: difusa, poco profunda) ── */
+  --shadow-card:     0 1px 2px rgba(0, 0, 0, 0.04), 0 4px 14px rgba(0, 0, 0, 0.05);
+  --shadow-popover:  0 8px 28px rgba(0, 0, 0, 0.14), 0 0 0 0.5px rgba(0, 0, 0, 0.06);
+  --shadow-fab:      0 6px 20px rgba(0, 0, 0, 0.16);
+  --shadow-accent:   0 2px 10px var(--blue-shadow);
+
+  /* ── Tipografía ── */
+  --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont,
+               "Segoe UI", "Helvetica Neue", sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, "SF Mono", Consolas, monospace;
+
+  /* ── Geometría ── */
+  --radius-sm:  6px;
+  --radius-md:  10px;
+  --radius-lg:  14px;
+  --radius-xl:  18px;
+  --radius-full: 9999px;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  background-color: var(--bg-deep);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  min-height: 100vh;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow: hidden;
+}
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, 0.18); border-radius: 99px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(0, 0, 0, 0.30); }

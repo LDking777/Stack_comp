@@ -116,40 +116,17 @@ if bot:
         fecha_hoy = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         prompt_dinamico = f"INFO DE SISTEMA: La fecha y hora actual es {fecha_hoy}.\n\n" + SYSTEM_PROMPT_BASE + contexto_actual
         
-        timeout_race = float(os.getenv('RACE_TIMEOUT', '25'))
-        
-        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-            futures = {
-                executor.submit(call_openai, texto_usuario, prompt_dinamico): 'OpenAI',
-                executor.submit(call_gemini, texto_usuario, prompt_dinamico): 'Gemini'
-            }
-            
+        # Ejecución directa sin carrera de IAs
+        respuesta = call_openai(texto_usuario, prompt_dinamico)
+        if respuesta and not str(respuesta).startswith("Error"):
+            respuesta = respuesta.replace("```markdown", "").replace("```", "")
+            mensaje_final = f"{respuesta}\n\n🤖 *Motor:* OpenAI"
             try:
-                for future in concurrent.futures.as_completed(futures, timeout=timeout_race):
-                    provider = futures[future]
-                    try:
-                        respuesta = future.result()
-                        if respuesta and not str(respuesta).startswith("Error"):
-                            
-                            # Limpieza rápida por si la IA devuelve Markdown inválido
-                            respuesta = respuesta.replace("```markdown", "").replace("```", "")
-                            
-                            mensaje_final = f"{respuesta}\n\n🤖 *Motor:* {provider}"
-                            
-                            # Usamos try/except al enviar el mensaje por si el Markdown se rompe
-                            try:
-                                bot.reply_to(message, mensaje_final, parse_mode='Markdown')
-                            except telebot.apihelper.ApiTelegramException:
-                                # Si falla el Markdown, enviamos como texto plano
-                                bot.reply_to(message, f"{respuesta}\n\n🤖 Motor: {provider}")
-                            return
-                    except Exception as e:
-                        print(f"❌ Error interno en {provider}: {str(e)}")
-                
-                bot.reply_to(message, "❌ Los motores de Nexo IA están saturados. Intenta en un momento.")
-
-            except concurrent.futures.TimeoutError:
-                bot.reply_to(message, "⏳ La consulta tardó demasiado. Reintenta.")
+                bot.reply_to(message, mensaje_final, parse_mode='Markdown')
+            except telebot.apihelper.ApiTelegramException:
+                bot.reply_to(message, f"{respuesta}\n\n🤖 Motor: OpenAI")
+        else:
+            bot.reply_to(message, "❌ No fue posible procesar la consulta en este momento.")
 
 def iniciar_bot_telegram():
     """Llamado desde app.py"""
