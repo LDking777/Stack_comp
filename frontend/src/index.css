@@ -1,7 +1,7 @@
 @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
 /* ==========================================================================
-   CALDAS 5.0 — Design Tokens
+   NEXO IA — Design Tokens (tema monocromo: grises / negros / blancos)
    Design: macOS Light · materiales translúcidos (vibrancy) + hairline borders
    ========================================================================== */
 
@@ -29,40 +29,40 @@
   --border-sidebar: rgba(0, 0, 0, 0.10);
   --border-strong:  rgba(0, 0, 0, 0.16);
 
-  /* ── Acento: systemBlue ── */
-  --blue-vivid:     #0071e3;
-  --blue-bright:    #007aff;
-  --blue-cyan:      #32ade6;
-  --blue-subtle:    rgba(0, 122, 255, 0.10);
-  --blue-badge:     rgba(0, 122, 255, 0.12);
-  --blue-border:    rgba(0, 122, 255, 0.26);
-  --blue-border-strong: rgba(0, 122, 255, 0.42);
-  --blue-ring:      rgba(0, 122, 255, 0.30);
-  --blue-shadow:    rgba(0, 76, 170, 0.18);
-  --blue-grad:      linear-gradient(135deg, #0a84ff, #0060df);
-  --blue-grad-deep: linear-gradient(135deg, #0060df, #0050b3);
+  /* ── Acento: escala de grises (sin color) ── */
+  --blue-vivid:     #2c2c2e;
+  --blue-bright:    #1c1c1e;
+  --blue-cyan:      #6b6b70;
+  --blue-subtle:    rgba(28, 28, 30, 0.06);
+  --blue-badge:     rgba(28, 28, 30, 0.10);
+  --blue-border:    rgba(28, 28, 30, 0.18);
+  --blue-border-strong: rgba(28, 28, 30, 0.32);
+  --blue-ring:      rgba(28, 28, 30, 0.20);
+  --blue-shadow:    rgba(28, 28, 30, 0.16);
+  --blue-grad:      linear-gradient(135deg, #3a3a3c, #1c1c1e);
+  --blue-grad-deep: linear-gradient(135deg, #1c1c1e, #000000);
 
-  /* ── Escala de tinte azul (fills) ── */
-  --tint-1: rgba(0, 122, 255, 0.06);   /* fila en reposo */
-  --tint-2: rgba(0, 122, 255, 0.10);   /* chip / reposo */
-  --tint-3: rgba(0, 122, 255, 0.14);   /* hover */
-  --tint-4: rgba(0, 122, 255, 0.20);   /* hover fuerte / seleccionado */
-  --tint-5: rgba(0, 122, 255, 0.26);   /* burbuja del asistente */
+  /* ── Escala de tinte (fills neutros) ── */
+  --tint-1: rgba(28, 28, 30, 0.04);   /* fila en reposo */
+  --tint-2: rgba(28, 28, 30, 0.07);   /* chip / reposo */
+  --tint-3: rgba(28, 28, 30, 0.11);   /* hover */
+  --tint-4: rgba(28, 28, 30, 0.16);   /* hover fuerte / seleccionado */
+  --tint-5: rgba(28, 28, 30, 0.20);   /* burbuja del asistente */
 
-  /* ── Colores de estado (semáforo del sistema) ── */
-  --green-active:   #1f9d55;
-  --green-subtle:   rgba(31, 157, 85, 0.12);
-  --green-border:   rgba(31, 157, 85, 0.28);
+  /* ── Colores de estado (todos en gris, diferenciados por luminosidad) ── */
+  --green-active:   #2c2c2e;
+  --green-subtle:   rgba(28, 28, 30, 0.08);
+  --green-border:   rgba(28, 28, 30, 0.18);
 
-  --amber-warn:     #b06f00;
-  --amber-subtle:   rgba(255, 149, 0, 0.14);
-  --amber-border:   rgba(255, 149, 0, 0.30);
+  --amber-warn:     #6b6b70;
+  --amber-subtle:   rgba(28, 28, 30, 0.08);
+  --amber-border:   rgba(28, 28, 30, 0.20);
 
-  --red-danger:     #d70015;
-  --red-badge:      #ff3b30;
-  --red-subtle:     rgba(255, 59, 48, 0.10);
-  --red-tint:       rgba(255, 59, 48, 0.05);
-  --red-border:     rgba(255, 59, 48, 0.24);
+  --red-danger:     #1c1c1e;
+  --red-badge:      #6b6b70;
+  --red-subtle:     rgba(28, 28, 30, 0.08);
+  --red-tint:       rgba(28, 28, 30, 0.04);
+  --red-border:     rgba(28, 28, 30, 0.18);
 
   /* ── Texto (escala systemGray) ── */
   --text-primary:   #1c1c1e;

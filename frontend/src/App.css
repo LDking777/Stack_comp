@@ -693,7 +693,7 @@
 
 .col-bar-wrap {
   height: 4px;
-  background: rgba(0, 122, 255, 0.14);
+  background: rgba(28, 28, 30, 0.14);
   border-radius: 99px;
   overflow: hidden;
 }
@@ -740,7 +740,7 @@
 
 .friction-item-row:hover {
   background: var(--red-subtle);
-  border-color: rgba(255, 59, 48, 0.38);
+  border-color: rgba(28, 28, 30, 0.28);
 }
 
 .friction-item-info {
