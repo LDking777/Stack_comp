@@ -1,17 +1,9 @@
-import { useState } from "react";
-import {
-  Calendar,
-  ChevronDown,
-  TrendingUp,
-  ArrowUpRight,
-  RefreshCw,
-  AlertCircle,
-} from "lucide-react";
+import { ArrowUpRight, AlertCircle, RefreshCw, Clock } from "lucide-react";
 
 /* ============================================================
-   GAUGE CIRCULAR — Ocupación Hotelera (con onda decorativa)
+   GAUGE CIRCULAR — Engagement promedio (con onda decorativa)
    ============================================================ */
-function CircularGauge({ percentage = 74 }) {
+function CircularGauge({ percentage = 0 }) {
   const radius          = 42;
   const circumference   = 2 * Math.PI * radius;
   const strokeDashoffset = circumference - (percentage / 100) * circumference;
@@ -52,7 +44,7 @@ function CircularGauge({ percentage = 74 }) {
 
         {/* Círculo */}
         <div className="gauge-circle-box">
-          <svg className="gauge-svg" viewBox="0 0 100 100" aria-label={`Ocupación hotelera ${percentage}%`}>
+          <svg className="gauge-svg" viewBox="0 0 100 100" aria-label={`Engagement promedio ${percentage}%`}>
             <defs>
               <linearGradient id="gauge-grad" x1="0%" y1="0%" x2="100%" y2="0%">
                 <stop offset="0%" stopColor="#1c1c1e" />
@@ -82,42 +74,37 @@ function CircularGauge({ percentage = 74 }) {
 }
 
 /* ============================================================
-   DONUT CHART — Categorías Principales
+   DONUT CHART — Desglose por dispositivo
    ============================================================ */
-const DEFAULT_CATEGORIES = [
-  { name: "Ruta del Café",       percentage: 38, color: "#1c1c1e" },
-  { name: "Ecoturismo Nevados",  percentage: 28, color: "#3a3a3c" },
-  { name: "Termalismo & Relax",  percentage: 20, color: "#6b6b70" },
-  { name: "Eventos & Ferias",    percentage: 14, color: "#9a9aa0" },
-];
-
-function DonutCategoriesChart({ categories }) {
-  const cats = categories || DEFAULT_CATEGORIES;
+function DonutChart({ segments }) {
+  const total = segments.reduce((a, s) => a + (s.percentage || 0), 0);
   let acc = 0;
-  const gradientStops = cats.map((c) => {
+  const gradientStops = segments.map((s) => {
     const start = acc;
-    acc += c.percentage;
-    return `${c.color} ${start}% ${acc}%`;
+    acc += s.percentage;
+    return `${s.color} ${start}% ${acc}%`;
   }).join(", ");
+
+  const isEmpty = !segments.length || total <= 0;
 
   return (
     <div className="donut-section-wrap">
       <div className="donut-center-graphic">
         <div
           className="donut-circle"
-          style={{ background: `conic-gradient(${gradientStops})` }}
+          style={{ background: isEmpty ? "#ececef" : `conic-gradient(${gradientStops})` }}
           role="img"
-          aria-label="Distribución de categorías turísticas"
+          aria-label="Distribución de sesiones por dispositivo"
         >
           <div className="donut-inner-hole" />
         </div>
       </div>
       <div className="donut-legend-grid">
-        {cats.map((c) => (
-          <div key={c.name} className="donut-legend-item">
-            <span className="legend-chip" style={{ backgroundColor: c.color }} />
-            <span className="legend-name">{c.name}</span>
-            <span className="legend-pct">{c.percentage}%</span>
+        {segments.map((s) => (
+          <div key={s.name} className="donut-legend-item">
+            <span className="legend-chip" style={{ backgroundColor: s.color }} />
+            <span className="legend-name">{s.name}</span>
+            <span className="legend-pct">{s.percentage}%</span>
           </div>
         ))}
       </div>
@@ -126,23 +113,48 @@ function DonutCategoriesChart({ categories }) {
 }
 
 /* ============================================================
-   BIDASHBOARD — Componente principal del tablero
+   Helpers de formato
+   ============================================================ */
+function fmtNum(n) {
+  return (Number(n) || 0).toLocaleString("es-CO");
+}
+
+function fmtDuration(sec) {
+  const s = Math.round(Number(sec) || 0);
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return m > 0 ? `${m} min ${r} s` : `${s} s`;
+}
+
+const DEVICE_COLORS = ["#1c1c1e", "#6b6b70", "#9a9aa0"];
+
+/* ============================================================
+   BIDASHBOARD — Componente principal del tablero (datos reales)
    ============================================================ */
 export default function BIDashboard({ data, loading, error, onRetry, onInspect }) {
-  const [period,          setPeriod]         = useState("Observatorio / Sept-Oct 2026");
-  const [showPeriodMenu,  setShowPeriodMenu]  = useState(false);
+  const kpis        = data?.kpis        || {};
+  const countryStats = data?.country_stats || [];
+  const deviceBreak = data?.device_breakdown || {};
+  const urlFriction  = data?.url_friction  || [];
 
-  const PERIODS = [
-    "Observatorio / Sept-Oct 2026",
-    "Q3 Consolidado (Jul-Sep 2026)",
-    "Año 2026 Acumulado",
-  ];
+  const engagementPct = Math.round((Number(kpis.avg_engagement) || 0) * 100);
+
+  const deviceSegments = (() => {
+    const mobile = Number(deviceBreak.mobile) || 0;
+    const desktop = Number(deviceBreak.desktop) || 0;
+    if (!mobile && !desktop) return [];
+    const total = mobile + desktop;
+    return [
+      { name: "Mobile",     percentage: Math.round((mobile * 100) / total), color: DEVICE_COLORS[0] },
+      { name: "Desktop",    percentage: Math.round((desktop * 100) / total), color: DEVICE_COLORS[1] },
+    ];
+  })();
 
   if (loading && !data) {
     return (
       <div className="dashboard-state-box">
         <RefreshCw size={26} className="spin text-blue" aria-hidden="true" />
-        <p>Sincronizando métricas en tiempo real de Caldas 5.0…</p>
+        <p>Sincronizando métricas de sesiones de usuario…</p>
       </div>
     );
   }
@@ -160,139 +172,103 @@ export default function BIDashboard({ data, loading, error, onRetry, onInspect }
     );
   }
 
-  const kpis        = data?.kpis        || {};
-  const categories  = data?.categories;
-  const countryStats = data?.country_stats || [];
-  const urlFriction  = data?.url_friction  || [];
-
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
 
       {/* ── Cabecera de sección ── */}
       <div className="dash-section-header">
         <h2 className="dash-section-title">
-          RESUMEN ANALÍTICO OPERATIVO (MANIZALES/CALDAS)
+          RESUMEN ANALÍTICO DE SESIONES
         </h2>
-
-        <div className="period-dropdown-wrap">
-          <button
-            id="period-selector"
-            className="period-dropdown-btn"
-            onClick={() => setShowPeriodMenu((v) => !v)}
-            aria-haspopup="listbox"
-            aria-expanded={showPeriodMenu}
-          >
-            <Calendar size={13} />
-            {period}
-            <ChevronDown size={13} />
-          </button>
-
-          {showPeriodMenu && (
-            <div className="period-menu-popup" role="listbox" aria-label="Seleccionar periodo">
-              {PERIODS.map((p) => (
-                <button
-                  key={p}
-                  role="option"
-                  aria-selected={period === p}
-                  className={period === p ? "active" : ""}
-                  onClick={() => { setPeriod(p); setShowPeriodMenu(false); }}
-                >
-                  {p}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
+        <span className="card-micro-hint">engagement · frustración · dispositivos · fricción</span>
       </div>
 
       {/* ── GRID PRINCIPAL ── */}
       <div className="caldas-grid">
 
-        {/* Card 1 — Visitantes Totales */}
+        {/* Card 1 — Sesiones Totales */}
         <article
           className="caldas-card card-kpi cursor-pointer"
-          onClick={() => onInspect?.("¿Cómo se distribuyen los 142.5K visitantes totales en el Q3 de Caldas?")}
+          onClick={() => onInspect?.("Analiza el total de sesiones y su comportamiento general")}
           role="button"
           tabIndex={0}
-          aria-label="Visitantes Totales - ver análisis"
+          aria-label="Sesiones totales - ver análisis"
         >
-          <div className="card-top-label">Visitantes Totales (Q3)</div>
+          <div className="card-top-label">Sesiones Totales</div>
           <div className="card-main-stat">
-            <span className="stat-large">{kpis.formatted_total_sesiones || "142.5K"}</span>
+            <span className="stat-large">{fmtNum(kpis.total_sesiones)}</span>
           </div>
           <div className="card-bottom-sub">
-            <span>Visitantes Totales</span>
-            <span className="stat-growth-tag">
-              <TrendingUp size={12} /> +12.4%
-            </span>
+            <span>grabaciones_analisis</span>
           </div>
         </article>
 
-        {/* Card 2 — Gauge Ocupación Hotelera */}
+        {/* Card 2 — Gauge Engagement Promedio */}
         <article
           className="caldas-card card-gauge cursor-pointer"
-          onClick={() => onInspect?.("¿Cuál fue la tasa de ocupación promedio en Manizales en septiembre?")}
+          onClick={() => onInspect?.("¿Qué nivel de engagement tienen las sesiones y qué lo está afectando?")}
           role="button"
           tabIndex={0}
-          aria-label="Ocupación Hotelera - ver análisis"
+          aria-label="Engagement promedio - ver análisis"
         >
-          <div className="card-top-label">Ocupación Hotelera</div>
-          <CircularGauge percentage={kpis.ocupacion_hotelera_pct || 74} />
+          <div className="card-top-label">Engagement Promedio</div>
+          <CircularGauge percentage={engagementPct} />
         </article>
 
-        {/* Card 3 — Ocupación Q3 */}
+        {/* Card 3 — Tasa de Frustración */}
         <article
           className="caldas-card card-kpi cursor-pointer"
-          onClick={() => onInspect?.("Explica el volumen de ocupación hotelera en Q3 y la demanda turística en Caldas")}
+          onClick={() => onInspect?.("¿Por qué ocurre frustración en las sesiones y en qué páginas?")}
           role="button"
           tabIndex={0}
-          aria-label="Ocupación hotelera Q3 - ver análisis"
+          aria-label="Tasa de frustración - ver análisis"
         >
-          <div className="card-top-label">Ocupación hotelera (Q3)</div>
+          <div className="card-top-label">Tasa de Frustración</div>
           <div className="card-main-stat">
-            <span className="stat-large">{kpis.ocupacion_q3 || "876.8K"}</span>
+            <span className="stat-large">{fmtNum(kpis.frustration_rate)}%</span>
           </div>
           <div className="card-bottom-sub">
-            <span>Estancias Registradas</span>
-            <span className="stat-highlight-dot">● Alta Demanda</span>
+            <span>Sesiones con fricción</span>
           </div>
         </article>
 
-        {/* Card 4 — Ingresos */}
+        {/* Card 4 — Duración Promedio */}
         <article
           className="caldas-card card-kpi cursor-pointer"
-          onClick={() => onInspect?.("Analiza los ingresos estimados de $31,383.900 COP y su impacto en la economía local")}
+          onClick={() => onInspect?.("Analiza la duración promedio de las sesiones por país y dispositivo")}
           role="button"
           tabIndex={0}
-          aria-label="Ingresos estimados - ver análisis"
+          aria-label="Duración promedio de sesión - ver análisis"
         >
-          <div className="card-top-label">Ingresos Estimados</div>
-          <div className="card-main-stat text-income">
-            <span className="stat-large">{kpis.ingresos_estimados || "$31,383.900"}</span>
+          <div className="card-top-label">Duración Promedio</div>
+          <div className="card-main-stat">
+            <span className="stat-large" style={{ fontSize: "1.35rem" }}>
+              <Clock size={14} aria-hidden="true" style={{ marginRight: 6, verticalAlign: "-1px" }} />
+              {fmtDuration(kpis.avg_duration_sec)}
+            </span>
           </div>
           <div className="card-bottom-sub">
-            <span>Ingresos</span>
-            <span className="badge-estimated-pill">Visitantes Estimados</span>
+            <span>Por sesión</span>
           </div>
         </article>
 
-        {/* Card 5 — Donut Categorías */}
+        {/* Card 5 — Donut Dispositivos */}
         <article
           className="caldas-card card-donut cursor-pointer"
-          onClick={() => onInspect?.("¿Cuáles son las categorías turísticas con mayor afluencia en Caldas?")}
+          onClick={() => onInspect?.("Compara engagement en celular vs escritorio")}
           role="button"
           tabIndex={0}
-          aria-label="Categorías principales - ver análisis"
+          aria-label="Distribución por dispositivo - ver análisis"
         >
-          <div className="card-top-label">Categorías Principales</div>
-          <DonutCategoriesChart categories={categories} />
+          <div className="card-top-label">Dispositivos</div>
+          <DonutChart segments={deviceSegments} />
         </article>
 
         {/* Card 6 — Mercados por origen */}
         <article className="caldas-card card-table">
           <div className="card-top-label">
-            <span>Mercados por Origen</span>
-            <span className="card-micro-hint">PostgreSQL RPC</span>
+            <span>Sesiones por País</span>
+            <span className="card-micro-hint">Agregación determinista</span>
           </div>
 
           <div className="mini-stats-table" role="table" aria-label="Estadísticas por país de origen">
@@ -301,16 +277,16 @@ export default function BIDashboard({ data, loading, error, onRetry, onInspect }
                 key={c.pais}
                 className="mini-table-row"
                 role="row"
-                onClick={() => onInspect?.(`Analiza el comportamiento turístico del mercado de ${c.pais} en Caldas`)}
+                onClick={() => onInspect?.(`Analiza el engagement y la frustración del mercado de ${c.pais}`)}
                 tabIndex={0}
-                onKeyDown={(e) => e.key === "Enter" && onInspect?.(`Analiza el comportamiento turístico del mercado de ${c.pais} en Caldas`)}
+                onKeyDown={(e) => e.key === "Enter" && onInspect?.(`Analiza el engagement y la frustración del mercado de ${c.pais}`)}
               >
                 <span className="col-country" role="cell">{c.pais}</span>
-                <span className="col-val" role="cell">{c.sesiones.toLocaleString()} vis.</span>
+                <span className="col-val" role="cell">{fmtNum(c.sesiones)} vis.</span>
                 <span className="col-bar-wrap" role="cell" aria-hidden="true">
                   <span
                     className="col-bar-fill"
-                    style={{ width: `${Math.min(100, Math.round((c.sesiones / 90000) * 100))}%` }}
+                    style={{ width: `${Math.min(100, Math.round((c.sesiones / Math.max(countryStats[0]?.sesiones, 1)) * 100))}%` }}
                   />
                 </span>
                 <span className="col-inspect" aria-hidden="true">
@@ -318,6 +294,11 @@ export default function BIDashboard({ data, loading, error, onRetry, onInspect }
                 </span>
               </div>
             ))}
+            {countryStats.length === 0 && (
+              <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", padding: "8px" }}>
+                Sin datos de países en este periodo.
+              </p>
+            )}
           </div>
         </article>
 
@@ -349,7 +330,7 @@ export default function BIDashboard({ data, loading, error, onRetry, onInspect }
                   </div>
                   <div className="friction-stat-box">
                     <span className="friction-pct">{f.afectacion_pct}%</span>
-                    <span className="friction-count">{f.sesiones_afectadas} ses.</span>
+                    <span className="friction-count">{fmtNum(f.sesiones_afectadas)} ses.</span>
                   </div>
                 </div>
               ))
