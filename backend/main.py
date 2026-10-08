@@ -73,7 +73,11 @@ async def process_user_query(payload: QueryRequest):
             is_safe=decision.is_safe,
             formatted_message=(
                 decision.security_reasoning or 
-                "Tu consulta es ambigua o infringe las políticas de seguridad. Por favor formula tu pregunta de manera específica sobre métricas o análisis."
+                "Solo puedo analizar métricas de sesiones de usuario: engagement, "
+                "frustración, países, dispositivos y eventos de fricción. "
+                "Prueba con: «¿Cuál es la tasa de frustración en México?», "
+                "«Compara engagement en celular vs escritorio» o "
+                "«¿Qué páginas tienen más rage clicks?»."
             ),
             latency=LatencyMetrics(
                 router_latency_ms=round(router_lat_ms, 2),

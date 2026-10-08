@@ -53,7 +53,7 @@ api-service-v2/
 │           ├── BIDashboard.jsx     # KPIs, paises, dispositivos, friccion
 │           ├── ChatPanel.jsx       # Burbuja flotante + panel lateral
 │           └── AnswerCard.jsx      # Render de respuestas estructuradas
-├── tests/                      # pytest (pytest.ini: testpaths=tests, 43 pruebas)
+├── tests/                      # pytest (pytest.ini: testpaths=tests, 47 pruebas)
 ├── supabase/migrations/        # SQL: esquema inicial + knowledge_auditoria
 ├── render.yaml                 # Blueprint de Render: rootDir, build, start, envVars
 ├── requirements.txt            # Dependencias del backend (fuente unica)
@@ -126,7 +126,7 @@ Invoke-WebRequest -Uri "http://127.0.0.1:8000/api/v1/health" -UseBasicParsing
 # Frontend
 cd frontend; npm run dev
 
-# Pruebas (43, sin llamar al proveedor real de LLM)
+# Pruebas (47, sin llamar al proveedor real de LLM)
 .\venv\Scripts\python.exe -m pytest -q
 
 # Verificar que un cambio no rompio las importaciones
@@ -173,6 +173,7 @@ Al dia de hoy:
 - Fallo de filtro de pais, resuelto.
 - Compresion TOON verificada.
 - v1 Flask eliminado del repo; `README.md` reescrito para v2.
+- **Preguntas de definicion/fuera de dominio con guia.** `intent_router.py` resuelve "¿que es engagement?" con un glosario determinista (`_definition_reply`, sin LLM): explica el termino y sugiere una pregunta. El mensaje de clarificacion del fallback y el del LLM ahora incluyen ejemplos. Se quitaron las preguntas rapidas del frontend (`STARTER_QUESTIONS` en `ChatPanel.jsx`).
 
 Pendientes, en orden de impacto:
 
