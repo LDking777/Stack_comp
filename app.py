@@ -215,26 +215,16 @@ def chat():
     fecha_actual = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     PROMPT_DINAMICO = f"INFO DE SISTEMA: La fecha y hora actual es {fecha_actual}.\n\n" + SYSTEM_PROMPT + datos_cloud
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
-        futures = {
-            ex.submit(call_openai, message, PROMPT_DINAMICO): 'OpenAI',
-            ex.submit(call_gemini, message, PROMPT_DINAMICO): 'Gemini'
-        }
-        try:
-            for fut in concurrent.futures.as_completed(futures, timeout=15):
-                resp = fut.result()
-                if resp and not str(resp).startswith("Error"):
-                    return jsonify({
-                        'source': futures[fut].lower(), 
-                        'response': resp, 
-                        'time_taken': round(time.time() - start_time, 2)
-                    })
-        except concurrent.futures.TimeoutError:
-            return jsonify({'error': 'Tiempo de espera agotado de las IAs'}), 504
-        except Exception as e:
-            print(f"Error en el motor de IA: {e}")
+    # Motor de IA unificado (Sin carrera de IAs)
+    resp = call_openai(message, PROMPT_DINAMICO)
+    if resp and not str(resp).startswith("Error"):
+        return jsonify({
+            'source': 'openai', 
+            'response': resp, 
+            'time_taken': round(time.time() - start_time, 2)
+        })
             
-    return jsonify({'error': 'Ambos modelos de IA fallaron al procesar la solicitud.'}), 502
+    return jsonify({'error': 'El modelo de IA falló al procesar la solicitud.'}), 502
 
 if __name__ == '__main__':
     port_num = int(os.getenv('PORT', 5000))

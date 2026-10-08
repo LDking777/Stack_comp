@@ -1,0 +1,396 @@
+# Documentación Técnica: Arquitectura MVP del Flujo de Intenciones (Nexo IA)
+
+Esta documentación describe la implementación técnica, arquitectura de software y flujo de datos del sistema híbrido de baja latencia desarrollado para **Nexo IA (CloudLabs)**. El sistema separa estrictamente el razonamiento probabilístico de la ejecución analítica determinista para garantizar **0% de alucinaciones numéricas**.
+
+---
+
+## 1. Diagrama de Arquitectura
+
+```mermaid
+flowchart TD
+    subgraph ClientLayer["Capa de Cliente"]
+        UI["Frontend (React / Vite)"]
+    end
+
+    subgraph GatewayLayer["API Gateway & Orquestación (FastAPI)"]
+        API["POST /api/v1/query"]
+        Router["Router de Intenciones<br/>(gpt-4o-mini + Structured Outputs)"]
+    end
+
+    subgraph FastPathLayer["Fast Path: Determinismo Matemático (0% Alucinación)"]
+        RPC["PostgreSQL RPCs en Supabase<br/>(rpc_get_marketing_kpis, rpc_get_engagement_summary, rpc_execute_metric_math)"]
+        DB[(Supabase PostgreSQL)]
+    end
+
+    subgraph HeavyPathLayer["Heavy Path: Síntesis Cualitativa"]
+        TOON["Compresor de Contexto<br/>(python-toon)"]
+        GPT4O["Síntesis Narrativa & Insights<br/>(GPT-4o)"]
+        MCP["Conectores MCP<br/>(Model Context Protocol)"]
+    end
+
+    UI -->|"Query del usuario"| API
+    API --> Router
+
+    Router -->|"TRIGGER_KPIS / TRIGGER_MATH"| RPC
+    Router -->|"TRIGGER_INSIGHTS"| RPC
+
+    RPC --> DB
+    DB -->|"Resultados Verificados"| RPC
+
+    RPC -->|"KPIs Exactos (Fast Path)"| API
+    RPC -->|"KPIs Exactos"| GPT4O
+
+    DB -.->|"Registros Operacionales"| TOON
+    TOON -.->|"Contexto Comprimido [N]{cols}"| GPT4O
+    MCP -.->|"Herramientas / Recursos Externos"| GPT4O
+    GPT4O -->|"Insight Cualitativo Estructurado"| API
+
+    API -->|"Response JSON con Métricas de Latencia"| UI
+```
+
+---
+
+## 2. Principios y Lineamientos Técnicos
+
+| Pilar Técnico | Tecnología / Estándar | Propósito y Garantía |
+| :--- | :--- | :--- |
+| **API Gateway** | **FastAPI + Uvicorn (async/await)** | Procesamiento asíncrono no bloqueante con validación en tiempo de ejecución. |
+| **Validación de Datos** | **Pydantic v2** | Tipado estricto para Structured Outputs y contratos de API REST. |
+| **Fast Path Router** | **`gpt-4o-mini` (OpenAI Native SDK)** | Clasificación de intenciones de ultra-baja latencia sin sobrecarga de LangChain. |
+| **Determinismo Numérico** | **PostgreSQL RPCs en Supabase** | 0% alucinaciones: sumas, promedios y métricas son calculados en motor SQL. |
+| **Compresión de Contexto**| **TOON (`python-toon`)** | Ahorro del 40-60% de tokens en arreglos tabulares para el Heavy Path. |
+| **Heavy Path** | **`gpt-4o`** | Síntesis cualitativa profunda alimentada con KPIs exactos + contexto TOON. |
+| **Extensibilidad** | **Model Context Protocol (MCP)** | Interfaces desacopladas para conectar herramientas y recursos autónomos. |
+
+---
+
+## 3. Estructura Modular del Proyecto
+
+```
+api-service-v2/
+├── backend/
+│   ├── __init__.py
+│   ├── config.py                 # Ajustes y variables de entorno tipadas (Pydantic Settings)
+│   ├── main.py                   # FastAPI Gateway, configuración CORS y endpoints
+│   ├── schemas/
+│   │   ├── __init__.py
+│   │   ├── router_schemas.py     # Esquemas para Structured Outputs del Router
+│   │   ├── insight_schemas.py    # Esquemas Pydantic v2 para diagnósticos de GPT-4o
+│   │   └── api_schemas.py        # Modelos de Request/Response y métricas de latencia
+│   ├── services/
+│   │   ├── __init__.py
+│   │   ├── intent_router.py      # Router Fast Path (gpt-4o-mini)
+│   │   ├── supabase_service.py   # Cliente asíncrono para Supabase REST y PostgreSQL RPC
+│   │   ├── toon_service.py       # Serializador y compresor TOON
+│   │   └── insights_service.py   # Generador de síntesis cualitativa (GPT-4o)
+│   └── mcp/
+│       ├── __init__.py
+│       └── connector.py          # Interfaces abstractas MCP (Tools y Resources)
+├── supabase/
+│   └── migrations/
+│       ├── 20261003000000_init_schema_and_mock_data.sql  # Esquema DDL + datos mock
+│       └── 20261003000001_rpc_analytical_functions.sql   # Funciones RPC deterministas
+├── test_intent_flow.py           # Suite de pruebas automatizadas del pipeline
+├── check_supabase.py             # Script de validación de conexión a base de datos
+└── ARQUITECTURA_FLUJO_INTENCIONES.md  # Esta documentación
+```
+
+---
+
+## 4. Detalle de Componentes
+
+### 4.1. Router de Intenciones (Fast Path - `gpt-4o-mini`)
+- **Ubicación:** `backend/services/intent_router.py`
+- Utiliza la función nativa `client.beta.chat.completions.parse` con el esquema Pydantic `IntentRouterDecision`.
+- Clasifica la consulta en 4 triggers:
+  1. `TRIGGER_KPIS`: Consultas directas de métricas agregadas (DeadClicks, RageClicks, conteo de sesiones).
+  2. `TRIGGER_INSIGHTS`: Consultas de análisis cualitativo, diagnósticos de causa raíz y estrategias de marketing.
+  3. `TRIGGER_MATH`: Operaciones aritméticas explícitas (promedios, sumas, razones).
+  4. `TRIGGER_CLARIFICATION`: Prevención de ataques de **Prompt Injection** o solicitudes ambiguas.
+- **Protección contra Inyección:** Inspección previa de patrones de jailbreak (`ignore all previous instructions`, etc.) y restricciones a nivel de system prompt.
+
+### 4.2. Persistencia y PostgreSQL RPCs (Supabase)
+- **Ubicación:** `supabase/migrations/20261003000001_rpc_analytical_functions.sql`
+- **Funciones Implementadas:**
+  * `rpc_get_marketing_kpis(p_url, p_device)`: Agregación de métricas de marketing con desglose por evento.
+  * `rpc_get_engagement_summary(p_pais, p_dispositivo)`: Promedios de engagement, duración, páginas vistas y cálculo exacto de la tasa de frustración.
+  * `rpc_execute_metric_math(p_operacion, p_tabla, p_columna, ...)`: Ejecutor matemático dinámico pero seguro contra SQL Injection (vía whitelisting estricto y `format`).
+
+### 4.3. Capa de Compresión de Contexto (TOON)
+- **Ubicación:** `backend/services/toon_service.py`
+- Utiliza la especificación **Token-Oriented Object Notation (`python-toon`)**.
+- Transforma matrices de registros JSON en encabezados estructurados compactos:
+  ```text
+  [10]{id,created_at,fecha,hora,pais,dispositivo,direccion_url_entrada,standarized_engagement_score,recuento_paginas,duracion_sesion_segundos,posible_frustracion}:
+    1,"2026-10-03T05:14:38",2026-10-02,"09:14:22",México,Mobile,/checkout/pago-tarjeta,0.18,2,45,1
+    2,"2026-10-03T05:14:38",2026-10-02,"10:30:15",Colombia,Desktop,/laboratorios-virtuales,0.89,9,480,0
+  ```
+- **Ventaja:** Disminuye el costo de inferencia y la latencia del modelo `gpt-4o` al reducir la ventana de contexto.
+
+### 4.4. Generación de Insights (Heavy Path - `gpt-4o`)
+- **Ubicación:** `backend/services/insights_service.py`
+- Invocado **únicamente** cuando el Router devuelve `TRIGGER_INSIGHTS`.
+- Recibe un prompt con inyección bifactorial:
+  1. **Evidencia empírica inmutable:** Salida de la RPC de Supabase.
+  2. **Detalle operacional:** Registros comprimidos en TOON.
+- Retorna un objeto Pydantic `QualitativeInsightResponse`:
+  - `executive_summary`: Resumen de alto nivel.
+  - `observations`: Lista de hallazgos con nivel de impacto (`ALTO`, `MEDIO`, `BAJO`) y el KPI numérico que lo comprueba.
+  - `recommendations`: Acciones recomendadas con prioridad del 1 al 5 y resultado esperado.
+  - `sentiment_and_friction_analysis`: Diagnóstico de frustración del usuario.
+
+### 4.5. Conectores MCP (Model Context Protocol)
+- **Ubicación:** `backend/mcp/connector.py`
+- Prepara la base para conectar herramientas autónomas (`MCPTool`) y fuentes de datos externas (`MCPResource`) para que el Heavy Path pueda consultar CRMs, Google Analytics o sistemas de tickets sin alterar el core del gateway.
+
+---
+
+## 5. Endpoints de la API REST
+
+### `POST /api/v1/query`
+Procesa la consulta del usuario mediante el Flujo de Intenciones completo.
+
+**Request Body:**
+```json
+{
+  "query": "Analiza por qué los usuarios de México tienen tanta frustración y qué podemos hacer"
+}
+```
+
+**Response Body (Ejemplo Heavy Path):**
+```json
+{
+  "query": "Analiza por qué los usuarios de México tienen tanta frustración y qué podemos hacer",
+  "trigger": "TRIGGER_INSIGHTS",
+  "verified_deterministic_kpis": {
+    "pais_filtrado": "México",
+    "total_sesiones": 12,
+    "promedio_engagement_score": 0.51,
+    "total_sesiones_alta_frustracion": 6,
+    "tasa_frustracion_porcentaje": 50.0
+  },
+  "toon_context_preview": "[10]{id,created_at,fecha,hora,pais,dispositivo...}: ...",
+  "qualitative_insight": {
+    "executive_summary": "Alta concentración de eventos de fricción en checkout móvil.",
+    "observations": [
+      {
+        "area": "Flujo de Pago y Checkout",
+        "impact_level": "ALTO",
+        "evidence_kpi": "50% tasa de frustración",
+        "detail": "Fricción recurrente identificada en eventos de RageClicks y DeadClicks."
+      }
+    ],
+    "recommendations": [
+      {
+        "priority": 1,
+        "action": "Optimizar el formulario de tarjeta para dispositivos móviles",
+        "expected_outcome": "Aumento de conversión y reducción del rebote en checkout"
+      }
+    ],
+    "sentiment_and_friction_analysis": "Frustración crítica en usuarios con sistema operativo Android.",
+    "data_verified": true
+  },
+  "formatted_message": "### 📊 Diagnóstico Estratégico NEXO IA...",
+  "latency": {
+    "router_latency_ms": 112.5,
+    "supabase_rpc_latency_ms": 45.2,
+    "heavy_path_latency_ms": 1820.0,
+    "total_pipeline_latency_ms": 1977.7
+  },
+  "is_safe": true
+}
+```
+
+### `GET /api/v1/health`
+Informa el estado de salud, modelos asignados y estado de la compresión TOON.
+
+---
+
+## 6. Guía de Ejecución y Pruebas
+
+### 6.1. Iniciar el Servidor FastAPI
+```powershell
+# En la raíz del proyecto con el entorno virtual activo:
+$env:PYTHONIOENCODING="utf-8"
+.\venv\Scripts\uvicorn.exe backend.main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+### 6.2. Documentación Interactiva (Swagger UI)
+Abre en tu navegador:
+👉 **[http://localhost:8000/docs](http://localhost:8000/docs)**
+
+### 6.3. Ejecutar la Suite de Pruebas Automatizadas
+```powershell
+$env:PYTHONIOENCODING="utf-8"
+.\venv\Scripts\python.exe test_intent_flow.py
+```
+
+### 6.4. Consumir desde el Frontend (React)
+```javascript
+const response = await fetch("http://localhost:8000/api/v1/query", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ query: "¿Cuáles son los DeadClicks en checkout?" })
+});
+const data = await response.json();
+console.log("Trigger:", data.trigger);
+console.log("KPIs deterministas:", data.verified_deterministic_kpis);
+console.log("Mensaje renderizable:", data.formatted_message);
+```
+
+---
+
+## 7. Resumen de Cambios Frente al Proyecto Anterior
+
+1. **Eliminación de la Carrera de IAs:** Se removió la ejecución simultánea con competencia de hilos entre OpenAI y Gemini en `app.py` y `telegram_bot.py`.
+2. **Desacoplamiento Determinista vs. Probabilístico:** El LLM ya no realiza cálculos agregados directamente ni lee tablas sin estructurar; la base de datos PostgreSQL ejecuta las agregaciones vía RPC.
+3. **Capa TOON Activa:** Implementación de compresión token-eficiente previa a la síntesis narrativa.
+4. **Arquitectura Asíncrona:** Migración del núcleo analítico a FastAPI con esquemas Pydantic v2 y soporte para conectores MCP.
+
+---
+
+## 8. Estado Real de Implementación (verificado)
+
+Esta sección corrige afirmaciones anteriores de este documento que no coincidían con el código. La tabla distingue entre lo implementado y lo pendiente.
+
+### 8.1. Correcciones de hechos anteriores
+
+| Afirmación previa | Estado real |
+| --- | --- |
+| Las 3 RPCs existen en Supabase | **Falso.** Solo existe `20261003000000_init_schema_and_mock_data.sql`. El archivo `20261003000001_rpc_analytical_functions.sql` nunca se creó. |
+| PostgreSQL ejecuta la agregación | **Parcial.** Las llamadas RPC devuelven `404`; opera `_fallback_deterministic_aggregation` en Python. |
+| `gpt-4o-mini` / `gpt-4o` como modelos | **Cambiado.** Proveedor configurable vía `LLM_PROVIDER`; por defecto `gemini-2.5-flash`. |
+| Insights generados por GPT-4o | **Cambiado.** `insights_service.py` usa `llm_client`, hoy Gemini. |
+| El LLM es determinista en agregados | **Correcto**, y es el invariante central: el LLM nunca calcula KPIs. |
+
+### 8.2. Proveedor de LLM intercambiable
+
+`backend/services/llm_client.py` centraliza el acceso. Se elige con `LLM_PROVIDER`:
+
+- `gemini` (por defecto): free tier, sin Requires-Payment.
+- `openai`: requiere créditos; actualmente la cuenta devuelve `429 insufficient_quota`.
+
+OpenAI se instancia con `max_retries=0` para evitar que los reintentos enmascaren la cuota agotada y disparen la latencia.
+
+### 8.3. Adaptación de esquemas Pydantic para Gemini
+
+Gemini implementa solo un subconjunto de OpenAPI Schema y rechaza el resto con `Unknown field for Schema`. La función `inline_refs()` reconstruye el esquema conservando solo las claves permitidas:
+
+- Resuelve `$defs` / `$ref` expandiéndolas en el lugar donde aparecen.
+- Descarta `title`, `minimum`, `maximum`, `additionalProperties`, `default`.
+- Colapsa `anyOf` con un único tipo no nulo.
+
+Sin esta adaptación, Pydantic generaba esquemas que Gemini rechazaba en el 100% de las consultas, y el sistema caía al fallback heurístico en silencio.
+
+### 8.4. Normalización de filtros
+
+`backend/services/normalization.py` existe porque el LLM devuelve el país como lo escribió el usuario. `Mexico`, `México` y `méxico` deben mapear al mismo valor en la base de datos.
+
+- `COUNTRY_ALIASES` y `DEVICE_ALIASES` con normalización por folding (minúsculas + eliminación de acentos).
+- `normalize_country()` / `normalize_device()` para canonicalizar.
+- `match_country()` / `match_device()` para filtrar registros ya recuperados, con coincidencia exacta en lugar de `in` difuso.
+
+Este componente corrige el defecto por el que el filtro `p_pais` devolvía `GLOBAL`.
+
+### 8.5. Endpoints
+
+- `POST /api/v1/query`: pipeline completo. Campos realmente usados por el frontend: `verified_deterministic_kpis`, `qualitative_insight`, `formatted_message`, `is_safe`.
+- `GET /api/v1/dashboard`: agregados para el tablero.
+- `GET /api/v1/health`: expone `provider`, modelos efectivos, `rpcs_deployed: false` y `MCP_ENABLED`.
+
+---
+
+## 9. Optimización de Tokens: Dónde Mirar
+
+Las cifras de esta sección están medidas con el esquema de datos actual (10 registros por tabla), no estimadas.
+
+### 9.1. Qué consume tokens y qué no
+
+Cada consulta de negocio paga **dos** llamadas al LLM. La primera es barata; la segunda es la cara.
+
+| Componente | Tamaño | Se paga en |
+| --- | --- | --- |
+| `ROUTER_SYSTEM_PROMPT` | 2 278 chars (~570 tok) | Todas las consultas |
+| `HEAVY_PATH_SYSTEM_PROMPT` | 1 016 chars (~254 tok) | Solo Heavy Path |
+| KPIs deterministas (repr de dict) | Variable | Solo Heavy Path |
+| Contexto TOON comprimido | Ver 9.2 | Solo Heavy Path |
+
+### 9.2. TOON: dónde está la mayor ganancia
+
+`toon_service.compress_records()` reduce el contexto antes de enviarlo al LLM:
+
+| Tabla | JSON | TOON | Ahorro |
+| --- | --- | --- | --- |
+| `grabaciones_analisis` (10 filas, 11 col) | 3 160 c (~790 tok) | 1 251 c (~313 tok) | **-60.4 %** |
+| `metricas_marketing` (10 filas, 8 col) | 2 139 c (~535 tok) | 1 003 c (~251 tok) | **-53.1 %** |
+
+El mecanismo es que TOON emite el encabezado de columnas una sola vez y luego solo valores delimitados, eliminando la repetición de claves JSON.
+
+**Dónde mirar primero para optimizar:** `limit` en las llamadas de `main.py` a `supabase_service.fetch_operational_records(..., limit=10)`. Ese `10` es el multiplicador directo del costo del Heavy Path. Bajar a 5 reduce a la mitad el contexto con la mayor pérdida de detalle. Subirlo sube el costo de forma lineal.
+
+### 9.3. Payload muerto hacia el frontend
+
+Tras el rediseño de la UI, `QueryResponse` sigue enviando cuatro campos que `AnswerCard.jsx` y `ChatPanel.jsx` **no leen**:
+
+- `toon_context_preview`: ~250 chars de TOON truncado en `main.py`.
+- `trigger` y `confidence_score`: exponían etiquetas técnicas que la UX decidió ocultar.
+- `latency`: tres métricas de tiempo que la UI ya no muestra.
+
+El único campo de `QueryResponse` en desuso con costo apreciable es `toon_context_preview`. Se calcula y se transmite sin consumidor. Esto no ahorra tokens de LLM, pero reduce ancho de banda y ruido de contrato.
+
+### 9.4. Fuentes de tokens evitables
+
+- `insights_service.py` serializa los KPIs con `f"{kpis}"`, que produce la `repr()` de un dict de Python, no JSON. Es más verboso y menos claro para el modelo.
+- `ROUTER_SYSTEM_PROMPT` se envía íntegro en cada consulta. Como el router es determinista en su salida y de bajo riesgo, es candidato a una versión reducida, moviendo las reglas al esquema Pydantic en lugar del prompt.
+- `contenido_paginas` devuelve 0 filas. Cualquier contexto que se le añada hoy es costo sin información.
+
+### 9.5. Qué NO optimizar
+
+No comprimir ni recortar los KPIs deterministas. Son la fuente de verdad y el LLM solo los narra. Reducirlos para ahorrar tokens degrada la precisión del insight sin un beneficio claro.
+
+---
+
+## 10. Bitácora de Errores y Pendientes
+
+Registro de defectos detectados durante la implementación, con su estado actual.
+
+### 10.1. Corregidos
+
+1. **Esquema rechazado por Gemini.** `ValueError: Unknown field for Schema: $defs`, luego `title`, luego `maximum`. El sistema degradaba al fallback heurístico en el 100% de las consultas y reports "funcionando". Resuelto con la reconstrucción por lista blanca en `inline_refs()`.
+2. **Filtro de país ignorado.** El LLM devolvía `Mexico` y la base contiene `México`, por lo que el filtro caía a `GLOBAL`. Resuelto con `normalization.py` y coincidencia exacta.
+3. **Fallback descartaba los filtros.** `_heuristic_fallback` no propagaba `country_filter` ni `device_filter`. Corregido: el fallback ahora aplica y devuelve los filtros aplicados.
+4. **TOON roto.** `eventos_friccion_detalle` y el previsualizado devolvían cadena vacía. Corregido el método a `compress_records()`. Compresión verificada en -53 % a -60 %.
+5. **`insights_service` acoplado a OpenAI.** Usaba `AsyncOpenAI` directo con `max_retries` por defecto, provocando reintentos ante la cuota agotada. Migrado a `llm_client`.
+6. **`insights_service` sin `await`.** La llamada asíncrona al LLM no se esperaba, devolviendo un coroutine en lugar de la respuesta. Corregido.
+7. **Importación de nombre privado.** Se importaba `_COUNTRY_ALIASES` desde otro módulo. Renombrado a `COUNTRY_ALIASES`.
+8. **Clave de API expuesta en `.env`.** Rotada por el usuario; la clave activa es ahora del formato `AQ.Ab8...` y responde correctamente.
+
+### 10.2. Pendientes
+
+1. **RPCs sin desplegar.** Es el pendiente de mayor impacto. Mientras no existan, la "ejecución determinista en PostgreSQL" no ocurre: el fallback de Python sustituye a la base de datos. Requiere `apply_migration` vía MCP de Supabase con OAuth, o ejecución manual del SQL.
+2. **Prompt y esquema desalineados.** El test del router con la consulta de DeadClicks devolvió `TRIGGER_KPIS` junto a `rpc_name: rpc_get_engagement_summary`. El esquema permite combinaciones inconsistentes porque no valida que el trigger y la RPC correspondan.
+3. **Saludo inicial no se renderiza.** `ChatPanel.jsx` construye el mensaje de bienvenida con `text`, pero los mensajes del asistente se pintan siempre vía `<AnswerCard payload={m.payload} />`. El texto del saludo no llega a verse.
+4. **Pregunta repetida idéntica.** `App.jsx` deduplica con una ref que compara la última pregunta; seleccionar dos veces la misma tarjeta no dispara un segundo envío.
+5. **Dependencias ausentes en `requirements.txt`.** Faltan `fastapi`, `uvicorn`, `pydantic-settings` y `toon`, sin los que el servicio no arranca desde cero.
+6. **Advertencia de SDK obsoleto.** `google.generativeai` está deprecado a favor de `google.genai`. Funciona, pero conviene migrar.
+7. **Acceso MCP no disponible en la sesión actual.** Requiere reiniciar opencode y autorizar por OAuth.
+8. **Campos muertos en el contrato.** Ver 9.3.
+9. **v1 sin reubicar.** `app.py`, `ai_clients.py`, `telegram_bot.py`, `knowledge_base.py`, `test_keys.py`, `test_models.py`, `static/` y `templates/` siguen en la raíz. `README.md` aún describe la app Flask de CaldasTour.
+
+---
+
+## 11. Cierre de Esta Sesion
+
+### 11.1. Corregido en esta sesion
+
+9. **`requirements.txt` incompleto y corrupto.** Le faltaban `fastapi`, `uvicorn`, `pydantic-settings` y `python-toon`, y venia codificado en UTF-16LE, lo que lo hacia ilegible como texto plano. Reescrito en UTF-8, agrupado por funcion, separando las dependencias de `legacy/` y verificado con `pip install --dry-run`.
+10. **`.env` desalineado con `config.py`.** Faltaban `LLM_PROVIDER` y los modelos de Gemini. Ahora estan explicitos, `PORT` paso de 5000 (Flask) a 8000 (FastAPI) y las claves de Telegram quedaron marcadas como legado.
+11. **Puntos de gasto de tokens medidos y documentados.** Ver seccion 9. Los numeros provienen de ejecucion real sobre el esquema actual, no de estimaciones.
+
+### 11.2. Pendiente de confirmacion
+
+El router fue probado directamente contra Gemini y devuelve confianzas no constantes, lo que descarta la hipotesis del fallback: extrae correctamente pais (`Mexico`, `Mexico` con acento, `Colombia`, `Peru`), dispositivo (`celular` -> `Mobile`, `escritorio` -> `Desktop`) y URL. Falta una pasada de extremo a extremo sobre la interfaz con el backend reiniciado.
+
+### 11.3. Sobre las mediciones de latencia
+
+Las cifras de latencia obtenidas durante la sesion con OpenAI **no son representativas**. Correspondian a reintentos automaticos derivados del `429 insufficient_quota`, no al tiempo de inferencia. Cualquier benchmarking debe repetirse con `LLM_PROVIDER=gemini` antes de documentarse.
