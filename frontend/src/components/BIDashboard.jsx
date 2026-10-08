@@ -28,12 +28,12 @@ function CircularGauge({ percentage = 74 }) {
         >
           <defs>
             <linearGradient id="wave-fill" x1="0%" y1="0%" x2="0%" y2="100%">
-              <stop offset="0%" stopColor="#0a84ff" stopOpacity="0.28" />
-              <stop offset="100%" stopColor="#0a84ff" stopOpacity="0" />
+              <stop offset="0%" stopColor="#2c2c2e" stopOpacity="0.28" />
+              <stop offset="100%" stopColor="#2c2c2e" stopOpacity="0" />
             </linearGradient>
             <linearGradient id="gauge-grad" x1="0%" y1="0%" x2="100%" y2="0%">
-              <stop offset="0%" stopColor="#0071e3" />
-              <stop offset="100%" stopColor="#32ade6" />
+              <stop offset="0%" stopColor="#1c1c1e" />
+              <stop offset="100%" stopColor="#6b6b70" />
             </linearGradient>
           </defs>
           <path
@@ -43,7 +43,7 @@ function CircularGauge({ percentage = 74 }) {
           <path
             d="M0,38 C35,50 65,20 100,30 C135,40 165,18 200,32"
             fill="none"
-            stroke="#0a84ff"
+            stroke="#2c2c2e"
             strokeWidth="2"
             strokeLinecap="round"
             opacity="0.8"
@@ -55,8 +55,8 @@ function CircularGauge({ percentage = 74 }) {
           <svg className="gauge-svg" viewBox="0 0 100 100" aria-label={`Ocupación hotelera ${percentage}%`}>
             <defs>
               <linearGradient id="gauge-grad" x1="0%" y1="0%" x2="100%" y2="0%">
-                <stop offset="0%" stopColor="#0071e3" />
-                <stop offset="100%" stopColor="#32ade6" />
+                <stop offset="0%" stopColor="#1c1c1e" />
+                <stop offset="100%" stopColor="#6b6b70" />
               </linearGradient>
             </defs>
             <circle cx="50" cy="50" r={radius} className="gauge-track" strokeWidth="9" fill="none" />
@@ -85,10 +85,10 @@ function CircularGauge({ percentage = 74 }) {
    DONUT CHART — Categorías Principales
    ============================================================ */
 const DEFAULT_CATEGORIES = [
-  { name: "Ruta del Café",       percentage: 38, color: "#0071e3" },
-  { name: "Ecoturismo Nevados",  percentage: 28, color: "#0a84ff" },
-  { name: "Termalismo & Relax",  percentage: 20, color: "#32ade6" },
-  { name: "Eventos & Ferias",    percentage: 14, color: "#64a8ff" },
+  { name: "Ruta del Café",       percentage: 38, color: "#1c1c1e" },
+  { name: "Ecoturismo Nevados",  percentage: 28, color: "#3a3a3c" },
+  { name: "Termalismo & Relax",  percentage: 20, color: "#6b6b70" },
+  { name: "Eventos & Ferias",    percentage: 14, color: "#9a9aa0" },
 ];
 
 function DonutCategoriesChart({ categories }) {

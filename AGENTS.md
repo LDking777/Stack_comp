@@ -175,7 +175,7 @@ Al dia de hoy:
 - Compresion TOON verificada.
 - v1 Flask eliminado del repo; `README.md` reescrito para v2.
 - **Preguntas de definicion/fuera de dominio con guia.** `intent_router.py` resuelve "¿que es engagement?" con un glosario determinista (`_definition_reply`, sin LLM): explica el termino y sugiere una pregunta. El mensaje de clarificacion del fallback y el del LLM ahora incluyen ejemplos. Se quitaron las preguntas rapidas del frontend (`STARTER_QUESTIONS` en `ChatPanel.jsx`).
-- **UI del bot ajustada.** El chat se llama **NEXO IA** (antes CALDAS IA) y usa un tema monocromo (grises/negros/blancos) solo en la burbuja, popup y AnswerCard. Las respuestas pasan por `Markdown.jsx` (sin dependencias) para que no se vean asteriscos ni `###` crudos.
+- **UI del bot ajustada.** El chat se llama **NEXO IA** (antes CALDAS IA) y usa un tema monocromo (grises/negros/blancos) en toda la web: tokens en `index.css` (acento, tintes y estados sin color), literales de `BIDashboard.jsx` (SVG de onda/gauge y donut) y bloque final mono en `App.css`. Las respuestas del bot pasan por `Markdown.jsx` (sin dependencias) para que no se vean asteriscos ni `###` crudos.
 
 Pendientes, en orden de impacto:
 
