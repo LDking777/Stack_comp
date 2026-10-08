@@ -51,7 +51,8 @@ api-service-v2/
 │       ├── api.js              # Cliente HTTP; API_BASE recorta el "/" final
 │       └── components/
 │           ├── BIDashboard.jsx     # KPIs, paises, dispositivos, friccion
-│           ├── ChatPanel.jsx       # Burbuja flotante + panel lateral
+│           ├── ChatPanel.jsx       # Burbuja flotante NEXO IA + panel lateral
+│           ├── Markdown.jsx        # Render minimo de markdown para respuestas del bot
 │           └── AnswerCard.jsx      # Render de respuestas estructuradas
 ├── tests/                      # pytest (pytest.ini: testpaths=tests, 47 pruebas)
 ├── supabase/migrations/        # SQL: esquema inicial + knowledge_auditoria
@@ -174,6 +175,7 @@ Al dia de hoy:
 - Compresion TOON verificada.
 - v1 Flask eliminado del repo; `README.md` reescrito para v2.
 - **Preguntas de definicion/fuera de dominio con guia.** `intent_router.py` resuelve "¿que es engagement?" con un glosario determinista (`_definition_reply`, sin LLM): explica el termino y sugiere una pregunta. El mensaje de clarificacion del fallback y el del LLM ahora incluyen ejemplos. Se quitaron las preguntas rapidas del frontend (`STARTER_QUESTIONS` en `ChatPanel.jsx`).
+- **UI del bot ajustada.** El chat se llama **NEXO IA** (antes CALDAS IA) y usa un tema monocromo (grises/negros/blancos) solo en la burbuja, popup y AnswerCard. Las respuestas pasan por `Markdown.jsx` (sin dependencias) para que no se vean asteriscos ni `###` crudos.
 
 Pendientes, en orden de impacto:
 

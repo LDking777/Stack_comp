@@ -158,7 +158,7 @@ export default function App() {
         </div>
       </div>
 
-      {/* ── Burbuja flotante de CALDAS IA ── */}
+      {/* ── Burbuja flotante de NEXO IA ── */}
       <ChatPanel
         ask={handleAsk}
         isThinking={thinking}

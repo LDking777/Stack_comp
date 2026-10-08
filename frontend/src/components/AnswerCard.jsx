@@ -5,6 +5,7 @@ import {
   MessageSquareText,
   AlertTriangle,
 } from "lucide-react";
+import Markdown from "./Markdown";
 
 const FIELD_LABELS = {
   pais_filtrado:                    "País analizado",
@@ -114,12 +115,12 @@ function InsightAnswer({ insight }) {
 
   return (
     <>
-      <p className="answer-text">{insight.executive_summary}</p>
+      <Markdown text={insight.executive_summary} />
 
       {insight.sentiment_and_friction_analysis && (
         <div className="answer-callout">
           <MessageSquareText size={14} />
-          <span>{insight.sentiment_and_friction_analysis}</span>
+          <Markdown text={insight.sentiment_and_friction_analysis} />
         </div>
       )}
 
@@ -139,7 +140,7 @@ function InsightAnswer({ insight }) {
                   </span>
                 </div>
                 <p style={{ fontSize: "0.76rem", color: "var(--text-secondary)", marginTop: "3px" }}>
-                  {o.detail}
+                  <Markdown text={o.detail} />
                 </p>
                 {o.evidence_kpi && (
                   <code className="finding-evidence">Respaldo: {o.evidence_kpi}</code>
@@ -197,9 +198,7 @@ export default function AnswerCard({ payload }) {
       ) : hasKpis ? (
         <DeterministicAnswer kpis={payload.verified_deterministic_kpis} />
       ) : (
-        <p className="answer-text" style={{ whiteSpace: "pre-line" }}>
-          {payload.formatted_message}
-        </p>
+        <Markdown text={payload.formatted_message} />
       )}
 
       {(hasInsight || hasKpis) && (
