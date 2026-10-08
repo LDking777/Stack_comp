@@ -1,0 +1,3 @@
+# Nexo IA v2 — Backend deploy en Render con Root Directory = ./backend
+# Incluye las dependencias reales desde la raiz del repo (unica fuente de verdad).
+-r ../requirements.txt

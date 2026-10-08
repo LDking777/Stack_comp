@@ -64,13 +64,14 @@ def test_health_expone_diagnostico_del_llm(client):
     body = client.get("/api/v1/health").json()
 
     assert body["status"] in {"online", "degraded"}
-    assert body["models"]["provider"] in {"gemini", "openai"}
+    assert body["models"]["provider"] in {"groq", "gemini", "openai"}
     assert body["models"]["router_timeout_s"] == pytest.approx(settings.ROUTER_TIMEOUT_S)
     assert body["models"]["insights_timeout_s"] == pytest.approx(settings.INSIGHTS_TIMEOUT_S)
 
     diagnostics = body["llm_diagnostics"]
     assert "available" in diagnostics
     assert "init_error" in diagnostics
+    assert "failover" in diagnostics
 
     routing = diagnostics["routing"]
     for key in ("llm_responses", "fallback_responses", "fallback_reasons", "fallback_rate"):

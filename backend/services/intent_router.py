@@ -44,6 +44,84 @@ def _record_fallback(reason: str) -> None:
         _ROUTE_STATS["fallback_reasons"].get(reason, 0) + 1
     )
 
+
+# Pequeña charla (saludos, "¿qué puedes hacer?"). Se resuelve aquí, antes de
+# llamar al LLM: es determinista, no consume cuota y evita que el usuario vea
+# el mensaje generico de clarificacion.
+_GREETING_RE = re.compile(
+    r"\b(hola|buenas|buenos dias|buenas dias|buenas tardes|buenas noches|hey|hello|holi|saludos|gracias|adios|chao)\b"
+)
+_CAPABILITY_RE = re.compile(
+    r"(que puedes|qué puedes|que sabes|qué sabes|para que sirves|para qué sirves|"
+    r"que haces|qué haces|como funcionas|cómo funcionas|que opciones|qué opciones|"
+    r"ayuda|help|manual|comandos)"
+)
+
+_CAPABILITY_LIST = [
+    ("KPIs exactos de sesiones", "¿Cuántas sesiones hay en Colombia?"),
+    ("Frustración y engagement por país", "¿Cuál es la tasa de frustración en México?"),
+    ("Comparación por dispositivo", "Compara engagement en celular vs escritorio"),
+    ("Eventos de fricción (rage/dead clicks)", "¿Qué páginas tienen más rage clicks?"),
+    ("Diagnóstico cualitativo con recomendaciones", "¿Por qué se frustran los usuarios de México?"),
+]
+
+
+def _small_talk_reply(query: str) -> str | None:
+    """
+    Respuesta propia para saludos y preguntas de capacidades.
+
+    Devuelve None si la consulta no es pequeña charla, para que el flujo
+    normal (LLM o fallback heurístico) siga su curso.
+    """
+    q = _strip_accents(query.lower())
+
+    if _CAPABILITY_RE.search(q):
+        lines = ["Puedo analizar las sesiones de usuario de tu sitio. Lo que sé hacer:"]
+        lines += [f"- {capability} → «{example}»" for capability, example in _CAPABILITY_LIST]
+        lines.append("Escribe una pregunta sobre esos datos y la respondo con cifras verificadas de la base.")
+        return "\n".join(lines)
+
+    if _GREETING_RE.search(q):
+        lines = [f"Hola. Soy Nexo IA, tu analista de sesiones de usuario."]
+        lines.append("Puedo darte KPIs exactos (engagement, frustración, países, dispositivos, fricción) o un diagnóstico con recomendaciones.")
+        lines.append("Prueba con: «¿Por qué se frustran los usuarios de México?»")
+        return "\n".join(lines)
+
+    return None
+
+
+def _list_intent(query: str) -> IntentRouterDecision | None:
+    """
+    Detecta pedidos explícitos de listado ("listame los dispositivos",
+    "qué páginas hay"). Se resuelve sin LLM: el prompt del router no conoce
+    `rpc_list_distinct`, y con el modelo activo la consulta volvía a caer en
+    los KPIs genéricos de siempre.
+    """
+    q = _strip_accents(query.lower())
+
+    entity = next(
+        (kind for keyword, kind in (
+            ("dispositiv", "dispositivos"),
+            ("pais", "paises"),
+            ("pagina", "paginas"),
+            ("url", "paginas"),
+        ) if keyword in q),
+        None,
+    )
+    if entity is None:
+        return None
+    if not any(v in q for v in ("lista", "list", "muestr", "dime", "cuale", "existen", "hay")):
+        return None
+
+    return IntentRouterDecision(
+        trigger=IntentTrigger.TRIGGER_KPIS,
+        confidence_score=0.88,
+        rpc_intent=RPCIntentParams(rpc_name="rpc_list_distinct", target_metric=entity),
+        requires_heavy_path=False,
+        is_safe=True,
+    )
+
+
 _COUNTRY_LOOKUP = {
     alias: normalize_country(alias)
     for alias in COUNTRY_ALIASES
@@ -106,6 +184,27 @@ class FastPathIntentRouter:
                 security_reasoning="Detectado posible intento de manipulación o Prompt Injection."
             ), latency_ms
 
+        # Saludos y preguntas de capacidades: respuesta determinista propia,
+        # sin gastar una llamada al proveedor y funcionando aunque caiga.
+        small_talk = _small_talk_reply(user_query)
+        if small_talk is not None:
+            latency_ms = (time.perf_counter() - start_time) * 1000
+            return IntentRouterDecision(
+                trigger=IntentTrigger.TRIGGER_CLARIFICATION,
+                confidence_score=1.0,
+                rpc_intent=RPCIntentParams(rpc_name="none"),
+                requires_heavy_path=False,
+                is_safe=True,
+                security_reasoning=small_talk,
+            ), latency_ms
+
+        # Listados de valores ("listame los dispositivos"): determinista,
+        # también antes del LLM, porque solo así se pide la RPC correcta.
+        list_decision = _list_intent(user_query)
+        if list_decision is not None:
+            latency_ms = (time.perf_counter() - start_time) * 1000
+            return list_decision, latency_ms
+
         if not llm_client.available:
             latency_ms = (time.perf_counter() - start_time) * 1000
             _record_fallback("llm_unavailable")
@@ -165,7 +264,9 @@ class FastPathIntentRouter:
         Fallback determinista por palabras clave cuando el LLM no está disponible.
 
         También extrae país y dispositivo por lista de países, de modo que una
-        caída del proveedor no devuelva siempre métricas globales.
+        caída del proveedor no devuelva siempre métricas globales. La RPC se
+        elige según el dominio de la consulta: sin esto, todo caía en
+        `rpc_get_marketing_kpis` y el usuario veía siempre los mismos KPIs.
         """
         q = _strip_accents(query.lower())
         params = RPCIntentParams(rpc_name="rpc_get_marketing_kpis")
@@ -175,10 +276,53 @@ class FastPathIntentRouter:
                 params.country_filter = canonical
                 break
 
+        has_device = False
         if any(k in q for k in ["movil", "celular", "cel ", "smartphone", "mobile"]):
             params.device_filter = "Mobile"
+            has_device = True
         elif any(k in q for k in ["escritorio", "computador", "laptop", "desktop", " pc"]):
             params.device_filter = "Desktop"
+            has_device = True
+
+        # Listados explícitos ("listame los dispositivos", "qué páginas hay"):
+        # responden con los valores reales de la base, no con un rechazo.
+        list_decision = _list_intent(query)
+        if list_decision is not None:
+            list_decision.rpc_intent.country_filter = params.country_filter
+            list_decision.rpc_intent.device_filter = params.device_filter
+            return list_decision
+
+        # Sin ninguna referencia al dominio analítico la única salida honesta
+        # es pedir clarificación: responder KPIs de marketing a un saludo era
+        # el modo en que el front "respondía lo mismo" sin importar la pregunta.
+        mentions_domain = bool(
+            params.country_filter
+            or has_device
+            or any(
+                k in q
+                for k in (
+                    "sesion", "usuario", "visitante", "engagement", "frustra",
+                    "abandono", "click", "rage", "dead", "afectacion", "metrica",
+                    "trafico", "campana", "conversion", "contenido", "pagina",
+                    "url", "landing", "checkout", "ocupacion", "tasa", "promedio",
+                    "total", "cuant", "cuanto", "fecha", "mes", "semana", "periodo",
+                    "dispositiv", "pais", "lista", "listado", "movil", "escritorio",
+                )
+            )
+        )
+        if not mentions_domain:
+            return IntentRouterDecision(
+                trigger=IntentTrigger.TRIGGER_CLARIFICATION,
+                confidence_score=0.90,
+                rpc_intent=RPCIntentParams(rpc_name="none"),
+                requires_heavy_path=False,
+                is_safe=True,
+                security_reasoning=(
+                    "Solo puedo analizar métricas de sesiones de usuario: "
+                    "engagement, frustración, países, dispositivos y eventos de "
+                    "fricción. Reformula tu pregunta sobre esos datos."
+                ),
+            )
 
         if any(k in q for k in ["por qué", "por que", "analiza", "insight", "diagnóstico", "recomienda", "estrategia"]):
             return IntentRouterDecision(
@@ -206,13 +350,19 @@ class FastPathIntentRouter:
                 requires_heavy_path=False,
                 is_safe=True,
             )
-        else:
-            return IntentRouterDecision(
-                trigger=IntentTrigger.TRIGGER_KPIS,
-                confidence_score=0.88,
-                rpc_intent=params,
-                requires_heavy_path=False,
-                is_safe=True,
-            )
+
+        # Fast Path: la RPC se elige por el tema de la consulta, no por defecto.
+        params.rpc_name = (
+            "rpc_get_engagement_summary"
+            if any(k in q for k in ["frustra", "engagement", "abandono", "interes", "sesion", "usuario"])
+            else "rpc_get_marketing_kpis"
+        )
+        return IntentRouterDecision(
+            trigger=IntentTrigger.TRIGGER_KPIS,
+            confidence_score=0.88,
+            rpc_intent=params,
+            requires_heavy_path=False,
+            is_safe=True,
+        )
 
 intent_router = FastPathIntentRouter()

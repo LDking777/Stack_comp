@@ -1,5 +1,6 @@
 import json
 import time
+import asyncio
 import logging
 from typing import Any, Type
 
@@ -10,6 +11,31 @@ from backend.config import settings
 logger = logging.getLogger(__name__)
 
 _RETRY_POLICY = {"max_retries": 0}
+
+# Fallos reintentables: cuota agotada (429) y cortes de red transitorios.
+# El router caia al fallback heuristico la mitad de las veces sin esto
+# (AGENTS.md, trampa 1).
+_RETRYABLE_MARKERS = (
+    "ResourceExhausted",
+    "RESOURCE_EXHAUSTED",
+    "429",
+    "rate limit",
+    "RateLimit",
+    "rate_limit",
+    "quota",
+    "APIConnectionError",
+    "Connection error",
+)
+
+
+def _is_retryable(exc: BaseException) -> bool:
+    """Detecta si un fallo del proveedor es transitorio y reintentable."""
+    rendered = f"{type(exc).__name__}: {exc}"
+    return any(marker in rendered for marker in _RETRYABLE_MARKERS)
+
+
+_MAX_ATTEMPTS = 3
+_BACKOFF_SECONDS = (5.0, 15.0)
 
 
 _GEMINI_ALLOWED = {
@@ -95,6 +121,46 @@ def inline_refs(schema: dict[str, Any]) -> dict[str, Any]:
     return build(resolve(schema))
 
 
+def strict_refs(schema: dict[str, Any]) -> dict[str, Any]:
+    """
+    Traduce un JSON Schema de Pydantic al modo estricto de OpenAI/Groq.
+
+    El modo estricto de OpenAI y Groq exige: `additionalProperties: false` en
+    todo objeto y `required` con TODAS las claves. Pydantic omite lo primero y
+    solo marca requerido lo no-nulo, así que ambos proveedores rechazan el
+    esquema crudo: Groq con `required is required to be supplied...including
+    every key in properties` y OpenAI con `additionalProperties` ausente.
+    """
+    defs = schema.get("$defs", {})
+
+    def resolve(node: Any) -> Any:
+        if isinstance(node, dict):
+            ref = node.get("$ref")
+            if isinstance(ref, str) and ref.startswith("#/$defs/"):
+                return resolve(defs.get(ref.split("/")[-1], {}))
+            return {k: resolve(v) for k, v in node.items() if k != "$ref"}
+        if isinstance(node, list):
+            return [resolve(item) for item in node]
+        return node
+
+    def build(node: Any) -> Any:
+        if isinstance(node, list):
+            return [build(item) for item in node]
+        if not isinstance(node, dict):
+            return node
+        out: dict[str, Any] = {}
+        for key, value in node.items():
+            if key in ("title", "default"):
+                continue
+            out[key] = build(value)
+        if out.get("type") == "object" and "properties" in out:
+            out["additionalProperties"] = False
+            out["required"] = list(out["properties"].keys())
+        return out
+
+    return build(resolve(schema))
+
+
 class LLMClient:
     """
     Cliente LLM intercambiable entre Gemini y OpenAI.
@@ -105,17 +171,41 @@ class LLMClient:
     """
 
     def __init__(self):
-        self.provider = (settings.LLM_PROVIDER or "gemini").strip().lower()
+        self.provider = (settings.LLM_PROVIDER or "groq").strip().lower()
         self._gemini = None
         self._openai = None
+        self._groq = None
         self._init_error: str | None = None
+        self._failover_stats = {"failovers": 0, "last_reason": None}
         self._init()
 
     def _init(self) -> None:
+        """
+        Inicializa los tres proveedores cuyas claves existan.
+
+        El primario sale de LLM_PROVIDER, pero los demas quedan listos para el
+        failover: si la cuota del primario se agota (Gemini free tier son 20
+        consultas/dia, Groq 1.000) se intenta el siguiente antes de caer a la
+        heuristica determinista.
+        """
+        errors = []
+
         try:
-            if self.provider == "gemini":
-                if not settings.GEMINI_API_KEY:
-                    raise RuntimeError("GEMINI_API_KEY no configurada en .env")
+            if settings.GROQ_API_KEY:
+                from openai import AsyncOpenAI
+
+                self._groq = AsyncOpenAI(
+                    api_key=settings.GROQ_API_KEY,
+                    base_url=settings.GROQ_BASE_URL,
+                    **_RETRY_POLICY,
+                )
+            else:
+                errors.append("GROQ_API_KEY no configurada en .env")
+        except Exception as exc:
+            errors.append(f"Groq: {exc}")
+
+        try:
+            if settings.GEMINI_API_KEY:
                 import google.generativeai as genai
 
                 genai.configure(api_key=settings.GEMINI_API_KEY)
@@ -127,18 +217,33 @@ class LLMClient:
                     },
                 )
             else:
-                if not settings.OPENAI_API_KEY:
-                    raise RuntimeError("OPENAI_API_KEY no configurada en .env")
+                errors.append("GEMINI_API_KEY no configurada en .env")
+        except Exception as exc:
+            errors.append(f"Gemini: {exc}")
+
+        try:
+            if settings.OPENAI_API_KEY:
                 from openai import AsyncOpenAI
 
                 self._openai = AsyncOpenAI(
                     api_key=settings.OPENAI_API_KEY, **_RETRY_POLICY
                 )
+            else:
+                errors.append("OPENAI_API_KEY no configurada en .env")
         except Exception as exc:
-            self._init_error = str(exc)
+            errors.append(f"OpenAI: {exc}")
+
+        if self._gemini is None and self._openai is None and self._groq is None:
+            self._init_error = "; ".join(errors) or "Ningun proveedor configurado"
             logger.error(
-                f"No se pudo inicializar el proveedor '{self.provider}': {exc}. "
-                "Los servicios usarán su fallback determinista."
+                f"No se pudo inicializar ningun proveedor LLM: {self._init_error}. "
+                "Los servicios usaran su fallback determinista."
+            )
+        elif errors:
+            # Un proveedor caido no degrada el servicio: queda el otro.
+            logger.warning(
+                "Proveedor LLM secundario no disponible (sigue el primario): %s",
+                "; ".join(errors),
             )
 
     @property
@@ -150,15 +255,42 @@ class LLMClient:
         """Motivo de la ultima falla de inicializacion, si la hubo."""
         return self._init_error
 
+    def failover_stats(self) -> dict:
+        """Veces que se uso el proveedor secundario por cuota agotada."""
+        return dict(self._failover_stats)
+
     def router_model(self) -> str:
+        if self.provider == "groq":
+            return settings.GROQ_ROUTER_MODEL
         if self.provider == "gemini":
             return settings.GEMINI_ROUTER_MODEL
         return settings.ROUTER_MODEL
 
     def insights_model(self) -> str:
+        if self.provider == "groq":
+            return settings.GROQ_INSIGHTS_MODEL
         if self.provider == "gemini":
             return settings.GEMINI_INSIGHTS_MODEL
         return settings.INSIGHTS_MODEL
+
+    def _client_for(self, provider: str):
+        if provider == "groq":
+            return self._groq
+        return self._gemini if provider == "gemini" else self._openai
+
+    def _model_for(self, provider: str, is_router: bool) -> str:
+        if provider == "groq":
+            return settings.GROQ_ROUTER_MODEL if is_router else settings.GROQ_INSIGHTS_MODEL
+        if provider == "gemini":
+            return settings.GEMINI_ROUTER_MODEL if is_router else settings.GEMINI_INSIGHTS_MODEL
+        return settings.ROUTER_MODEL if is_router else settings.INSIGHTS_MODEL
+
+    def _provider_chain(self) -> list[str]:
+        """Primario primero, el resto despues; solo los inicializados."""
+        all_providers = ["groq", "gemini", "openai"]
+        primary = self.provider if self.provider in all_providers else "groq"
+        order = [primary] + [p for p in all_providers if p != primary]
+        return [p for p in order if self._client_for(p) is not None]
 
     async def structured(
         self,
@@ -171,18 +303,66 @@ class LLMClient:
     ) -> tuple[BaseModel, float]:
         """
         Genera una respuesta estructurada validada contra `response_model`.
-        Lanza excepción si el proveedor falla o devuelve JSON inválido.
+
+        Recorre la cadena de proveedores: si el primario falla por cuota
+        agotada o red, se intenta el siguiente con el tiempo restante. `model`
+        es el modelo del proveedor primario; para los demas se resuelve el
+        equivalente.
         """
         if not self.available:
             raise RuntimeError(self._init_error or "LLM no disponible")
 
-        if self.provider == "gemini":
-            return await self._structured_gemini(
-                system_prompt, user_content, response_model, model, temperature, timeout
-            )
-        return await self._structured_openai(
-            system_prompt, user_content, response_model, model, temperature, timeout
+        chain = self._provider_chain()
+        if not chain:
+            raise RuntimeError(self._init_error or "Ningun proveedor LLM inicializado")
+
+        is_router = model in (
+            settings.GROQ_ROUTER_MODEL,
+            settings.GEMINI_ROUTER_MODEL,
+            settings.ROUTER_MODEL,
         )
+        total_start = time.perf_counter()
+        deadline = total_start + timeout
+        last_exc: Exception | None = None
+
+        for index, provider in enumerate(chain):
+            remaining = deadline - time.perf_counter()
+            if remaining <= 0:
+                break
+            resolved_model = model if provider == self.provider else self._model_for(provider, is_router)
+            try:
+                if provider == "gemini":
+                    result, _ = await self._structured_gemini(
+                        system_prompt, user_content, response_model, resolved_model, temperature, remaining
+                    )
+                else:
+                    # Groq expone una API compatible con OpenAI: reutiliza el
+                    # mismo camino con su propio cliente.
+                    result, _ = await self._structured_openai(
+                        system_prompt, user_content, response_model, resolved_model,
+                        temperature, remaining, client=self._client_for(provider),
+                    )
+                if index > 0:
+                    self._failover_stats["failovers"] += 1
+                    logger.info(
+                        "Failover activo: el proveedor primario (%s) no respondio "
+                        "y la respuesta la dio %s.", chain[0], provider,
+                    )
+                return result, (time.perf_counter() - total_start) * 1000
+            except Exception as exc:
+                last_exc = exc
+                if index < len(chain) - 1 and _is_retryable(exc):
+                    self._failover_stats["last_reason"] = describe_error(exc)
+                    logger.warning(
+                        "Proveedor (%s) fallo con error transitorio; se intenta %s. %s",
+                        provider,
+                        chain[index + 1],
+                        describe_error(exc),
+                    )
+                    continue
+                raise
+
+        raise last_exc if last_exc else asyncio.TimeoutError()
 
     async def _structured_gemini(
         self,
@@ -199,6 +379,7 @@ class LLMClient:
         schema = inline_refs(response_model.model_json_schema())
         prompt = f"{system_prompt}\n\n---\n{user_content}"
         start = time.perf_counter()
+        deadline = start + timeout
 
         def call():
             engine = genai.GenerativeModel(
@@ -211,7 +392,32 @@ class LLMClient:
             )
             return engine.generate_content(prompt)
 
-        raw = await asyncio.wait_for(asyncio.to_thread(call), timeout=timeout)
+        # Reintenta solo ante rate limit (429), dentro del mismo presupuesto de
+        # timeout. Un timeout real no se reintenta: lo reporta el caller.
+        attempt = 0
+        while True:
+            remaining = deadline - time.perf_counter()
+            if remaining <= 0:
+                raise asyncio.TimeoutError()
+            try:
+                raw = await asyncio.wait_for(asyncio.to_thread(call), timeout=remaining)
+                break
+            except Exception as exc:
+                attempt += 1
+                if attempt >= _MAX_ATTEMPTS or not _is_retryable(exc):
+                    raise
+                backoff = _BACKOFF_SECONDS[min(attempt - 1, len(_BACKOFF_SECONDS) - 1)]
+                if time.perf_counter() + backoff >= deadline:
+                    raise
+                logger.warning(
+                    "Gemini rechazo la peticion por cuota agotada; reintento %s/%s en %.1fs: %s",
+                    attempt,
+                    _MAX_ATTEMPTS - 1,
+                    backoff,
+                    describe_error(exc),
+                )
+                await asyncio.sleep(backoff)
+
         latency_ms = (time.perf_counter() - start) * 1000
 
         text = getattr(raw, "text", None)
@@ -227,24 +433,75 @@ class LLMClient:
         model: str,
         temperature: float,
         timeout: float,
+        client=None,
     ) -> tuple[BaseModel, float]:
+        """
+        Camino compatible con OpenAI (OpenAI y Groq).
+
+        Ambos exigen el modo estricto para `response_format` (Groq devuelve un
+        400 si el esquema de Pydantic llega crudo), así que se transforma con
+        `strict_refs()` y la respuesta se valida aquí en lugar de depender del
+        parseo del SDK.
+
+        Reintenta solo ante fallos transitorios (429, red) dentro del mismo
+        presupuesto de timeout; un timeout real no se reintenta.
+        """
+        active = client or self._openai
+        strict_schema = strict_refs(response_model.model_json_schema())
+        response_format = {
+            "type": "json_schema",
+            "json_schema": {
+                "name": response_model.__name__,
+                "schema": strict_schema,
+                "strict": True,
+            },
+        }
         start = time.perf_counter()
-        completion = await self._openai.beta.chat.completions.parse(
-            model=model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_content},
-            ],
-            response_format=response_model,
-            temperature=temperature,
-            timeout=timeout,
-            **_RETRY_POLICY,
-        )
+        deadline = start + timeout
+        attempt = 0
+
+        while True:
+            remaining = deadline - time.perf_counter()
+            if remaining <= 0:
+                raise asyncio.TimeoutError()
+            try:
+                completion = await asyncio.wait_for(
+                    active.chat.completions.create(
+                        model=model,
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_content},
+                        ],
+                        response_format=response_format,
+                        temperature=temperature,
+                        timeout=remaining,
+                    ),
+                    timeout=remaining,
+                )
+                break
+            except Exception as exc:
+                attempt += 1
+                if attempt >= _MAX_ATTEMPTS or not _is_retryable(exc):
+                    raise
+                backoff = _BACKOFF_SECONDS[min(attempt - 1, len(_BACKOFF_SECONDS) - 1)]
+                if time.perf_counter() + backoff >= deadline:
+                    raise
+                logger.warning(
+                    "%s rechazo la peticion por cuota agotada o red; "
+                    "reintento %s/%s en %.1fs: %s",
+                    model,
+                    attempt,
+                    _MAX_ATTEMPTS - 1,
+                    backoff,
+                    describe_error(exc),
+                )
+                await asyncio.sleep(backoff)
+
         latency_ms = (time.perf_counter() - start) * 1000
-        parsed = completion.choices[0].message.parsed
-        if parsed is None:
-            raise ValueError("OpenAI devolvió una respuesta sin parsear")
-        return parsed, latency_ms
+        content = completion.choices[0].message.content
+        if not content:
+            raise ValueError("El proveedor devolvió una respuesta vacía")
+        return response_model.model_validate_json(content), latency_ms
 
 
 llm_client = LLMClient()

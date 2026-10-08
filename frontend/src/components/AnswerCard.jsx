@@ -32,6 +32,9 @@ const FIELD_LABELS = {
   resultado:                        "Resultado",
   valor:                            "Valor",
   total:                            "Total",
+  categoria:                        "Categoría",
+  total_valores:                    "Valores distintos",
+  valores_distintos:                "Listado (con sesiones)",
 };
 
 const SKIP_FIELDS = new Set(["modo", "explicacion_determinista"]);
@@ -194,7 +197,9 @@ export default function AnswerCard({ payload }) {
       ) : hasKpis ? (
         <DeterministicAnswer kpis={payload.verified_deterministic_kpis} />
       ) : (
-        <p className="answer-text">{payload.formatted_message}</p>
+        <p className="answer-text" style={{ whiteSpace: "pre-line" }}>
+          {payload.formatted_message}
+        </p>
       )}
 
       {(hasInsight || hasKpis) && (
