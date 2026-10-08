@@ -904,7 +904,7 @@
 }
 
 /* ============================================================
-   CHAT POPUP — CALDAS IA  (Burbuja flotante + popup compacto)
+   CHAT POPUP — NEXO IA  (Burbuja flotante + popup compacto)
    ============================================================ */
 
 /* ── Popup flotante ── */
@@ -1793,3 +1793,232 @@
   .caldas-grid { grid-template-columns: 1fr; }
   .chat-aside { display: none; }
 }
+
+/* ============================================================
+   NEXO IA — TEMA MONOCROMO (grises / negros / blancos)
+   Punto de la burbuja de chat, el popup y la AnswerCard.
+   Se define al final para ganar la cascada sobre los bloques previos.
+   ============================================================ */
+:root {
+  --mono-ink: #1c1c1e;
+  --mono-ink-2: #6b6b70;
+  --mono-ink-3: #9a9aa0;
+  --mono-line: #d6d6db;
+  --mono-fill: #f2f2f4;
+  --mono-fill-2: #e7e7ea;
+  --mono-deep: #111114;
+}
+
+.chat-popup {
+  background: #ffffff;
+  border-color: var(--mono-line);
+  backdrop-filter: blur(32px);
+  -webkit-backdrop-filter: blur(32px);
+}
+
+.chat-popup-head {
+  background: #f7f7f8;
+  border-bottom-color: var(--mono-line);
+}
+
+.chat-avatar-ring {
+  background: var(--mono-deep);
+  border-color: #000000;
+  color: #ffffff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+}
+
+.chat-id-text strong { color: var(--mono-ink); }
+
+.chat-status-dot {
+  color: #3a3a3c;
+  background: #ececef;
+  border-color: #c9c9ce;
+}
+
+.chat-status-dot::before {
+  background: var(--mono-deep);
+  box-shadow: 0 0 4px rgba(0, 0, 0, 0.35);
+}
+
+.btn-caldas-icon {
+  background: #f0f0f2;
+  border-color: var(--mono-line);
+  color: #3a3a3c;
+}
+
+.btn-caldas-icon:hover {
+  background: #e2e2e6;
+  color: var(--mono-ink);
+}
+
+.msg-assistant-icon {
+  background: var(--mono-deep);
+  color: #ffffff;
+}
+
+.msg-bubble-assistant {
+  background: var(--mono-fill);
+  border-color: var(--mono-line);
+  color: var(--mono-ink);
+}
+
+.msg-bubble-user {
+  background: var(--mono-deep);
+  border-color: #000000;
+  color: #ffffff;
+  box-shadow: none;
+}
+
+.msg-kpi-badge {
+  color: var(--mono-ink);
+  background: #e9e9ec;
+  border-color: #ceced2;
+}
+
+.thinking-bubble {
+  background: var(--mono-fill);
+  border-color: var(--mono-line);
+}
+
+.thinking-dots span { background: var(--mono-deep); }
+.thinking-text { color: #4a4a4d; }
+
+.chat-input-bar {
+  background: #f7f7f8;
+  border-top-color: var(--mono-line);
+}
+
+.chat-input-bar input {
+  background: #f0f0f2;
+  border-color: var(--mono-line);
+  color: var(--mono-ink);
+}
+
+.chat-input-bar input:focus {
+  border-color: var(--mono-deep);
+  box-shadow: 0 0 0 3px rgba(28, 28, 30, 0.14);
+}
+
+.chat-send-btn {
+  background: var(--mono-deep);
+  box-shadow: none;
+}
+
+.chat-send-btn:hover:not(:disabled) {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.24);
+}
+
+.chat-fab {
+  background: var(--mono-deep);
+  color: #ffffff;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.24);
+}
+
+.chat-fab-badge {
+  background: var(--mono-deep);
+  color: #ffffff;
+  border-color: #ffffff;
+}
+
+.answer-text { color: var(--mono-ink); }
+.answer-metric { background: #efeff1; }
+.answer-metric-label { color: #555557; }
+
+.answer-callout {
+  background: #efeff1;
+  border-left-color: var(--mono-deep);
+  color: #3a3a3c;
+}
+
+.answer-block-title { color: var(--mono-ink-2); }
+
+.finding-list li {
+  background: var(--mono-fill);
+  border-color: #dcdce0;
+}
+
+.finding-top strong { color: var(--mono-ink); }
+.finding-evidence { color: #77777b; }
+
+.impact-high { background: #111111; color: #ffffff; }
+.impact-mid   { background: #6b6b70; color: #ffffff; }
+.impact-low   { background: #e4e4e8; color: #111111; }
+
+.action-rank { background: var(--mono-deep); color: #ffffff; }
+.action-content strong { color: var(--mono-ink); }
+.action-outcome { color: var(--mono-ink-2); }
+
+.verified-tag {
+  color: #3a3a3c;
+  background: #efeff1;
+  border-color: #ceced2;
+}
+
+.answer-safety {
+  background: #f4f4f5;
+  border-color: #c9c9ce;
+}
+.answer-safety strong { color: var(--mono-ink); }
+
+.msg-error {
+  background: #ececef;
+  border-color: #ccccd1;
+  color: var(--mono-ink);
+}
+
+/* ── Formato de markdown en los mensajes del bot ── */
+.md-root {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.md-paragraph { margin: 0; }
+
+.md-root ul.md-list,
+.md-root ol.md-list {
+  margin: 2px 0 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.md-root li { margin: 0; }
+
+.md-heading { font-weight: 700; }
+.md-h3 { font-size: 0.86rem; color: var(--mono-ink); }
+.md-h4 {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--mono-ink-2);
+  margin-top: 2px;
+}
+
+.md-codeblock {
+  background: #e9e9ec;
+  border: 1px solid var(--mono-line);
+  border-radius: 8px;
+  padding: 6px 8px;
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  color: #222224;
+  overflow-x: auto;
+  margin: 2px 0;
+  white-space: pre;
+}
+
+.md-root code {
+  font-family: var(--font-mono);
+  background: rgba(120, 120, 128, 0.16);
+  padding: 1px 4px;
+  border-radius: 4px;
+  font-size: 0.74em;
+}
+.md-codeblock code {
+  background: transparent;
+  padding: 0;
+  font-size: inherit;
+}
+.md-root strong { font-weight: 700; }

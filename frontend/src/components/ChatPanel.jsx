@@ -5,9 +5,9 @@ import {
   Bot,
   X,
   MessageCircle,
-  Minimize2,
 } from "lucide-react";
 import AnswerCard from "./AnswerCard";
+import Markdown from "./Markdown";
 
 const GREETING = {
   role: "assistant",
@@ -99,7 +99,7 @@ export default function ChatPanel({ ask, isThinking, pendingQuestion, onPendingH
         className={`chat-popup ${open ? "chat-popup--open" : ""}`}
         role="dialog"
         aria-modal="true"
-        aria-label="CALDAS IA — Asistente Analítico"
+        aria-label="NEXO IA — Asistente Analítico"
         aria-hidden={!open}
       >
         {/* Header del popup */}
@@ -109,7 +109,7 @@ export default function ChatPanel({ ask, isThinking, pendingQuestion, onPendingH
               <Bot size={15} />
             </div>
             <div className="chat-id-text">
-              <strong>CALDAS IA</strong>
+              <strong>NEXO IA</strong>
               <span>Asistente Analítico</span>
             </div>
           </div>
@@ -143,7 +143,7 @@ export default function ChatPanel({ ask, isThinking, pendingQuestion, onPendingH
                   <div className="msg-assistant-icon" aria-hidden="true"><Bot size={13} /></div>
                   <div className="msg-bubble-assistant">
                     {m.text
-                      ? <p style={{ margin: 0 }}>{m.text}</p>
+                      ? <Markdown text={m.text} />
                       : <AnswerCard payload={m.payload} />}
                     {m.error && <div className="msg-error">{m.error}</div>}
                     {m.payload?.verified_deterministic_kpis && (
@@ -193,7 +193,7 @@ export default function ChatPanel({ ask, isThinking, pendingQuestion, onPendingH
         id="chat-fab-btn"
         className={`chat-fab ${open ? "chat-fab--hidden" : ""}`}
         onClick={() => setOpen(true)}
-        aria-label="Abrir asistente CALDAS IA"
+        aria-label="Abrir asistente NEXO IA"
         aria-expanded={open}
       >
         <MessageCircle size={22} />
@@ -202,7 +202,7 @@ export default function ChatPanel({ ask, isThinking, pendingQuestion, onPendingH
             {unreadCount}
           </span>
         )}
-        <span className="chat-fab-label">CALDAS IA</span>
+        <span className="chat-fab-label">NEXO IA</span>
       </button>
     </>
   );
