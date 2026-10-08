@@ -168,7 +168,7 @@ Estas cosas fallan **en silencio**. Un cambio puede romper el sistema sin que ni
 
 Al dia de hoy:
 
-- Router, Heavy Path, tablero y chat funcionando con Gemini (`LLM_PROVIDER=gemini`).
+- Router, Heavy Path, tablero y chat funcionando con **Groq** (`LLM_PROVIDER=groq`, modelo `openai/gpt-oss-120b` en ambas etapas). Groq es el proveedor activo por decisión: Gemini se descartó por no ofrecer capa gratuita y OpenAI está sin créditos (`429 insufficient_quota`).
 - **API desplegada en Render** (`stack-comp.onrender.com`) y **frontend en Vercel** (`stack-comp.vercel.app`), verificados con `curl`.
 - `insights_service.py` sin llamada asincrona sin await, resuelto.
 - Fallo de filtro de pais, resuelto.
@@ -176,6 +176,7 @@ Al dia de hoy:
 - v1 Flask eliminado del repo; `README.md` reescrito para v2.
 - **Preguntas de definicion/fuera de dominio con guia.** `intent_router.py` resuelve "¿que es engagement?" con un glosario determinista (`_definition_reply`, sin LLM): explica el termino y sugiere una pregunta. El mensaje de clarificacion del fallback y el del LLM ahora incluyen ejemplos. Se quitaron las preguntas rapidas del frontend (`STARTER_QUESTIONS` en `ChatPanel.jsx`).
 - **UI del bot ajustada.** El chat se llama **NEXO IA** (antes CALDAS IA) y usa un tema monocromo (grises/negros/blancos) en toda la web: tokens en `index.css` (acento, tintes y estados sin color), literales de `BIDashboard.jsx` (SVG de onda/gauge y donut) y bloque final mono en `App.css`. Las respuestas del bot pasan por `Markdown.jsx` (sin dependencias) para que no se vean asteriscos ni `###` crudos.
+- **Dashboard alineado con los datos reales.** `BIDashboard.jsx` ya no muestra turismo hardcodeado (ocupación hotelera, ingresos, categorías). Ahora pinta lo que devuelve `GET /api/v1/dashboard`: sesiones totales, engagement promedio (gauge), tasa de frustración, duración promedio, desglose por dispositivo (donut), sesiones por país y puntos de fricción. Header genérico "RESUMEN ANALÍTICO DE SESIONES"; se eliminó el selector de periodo ficticio.
 
 Pendientes, en orden de impacto:
 
