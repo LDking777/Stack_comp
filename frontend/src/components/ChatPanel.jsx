@@ -9,13 +9,6 @@ import {
 } from "lucide-react";
 import AnswerCard from "./AnswerCard";
 
-export const STARTER_QUESTIONS = [
-  "¿Por qué se frustran los usuarios de México?",
-  "¿Cuál es la tasa de frustración en Colombia?",
-  "Compara engagement en celular vs escritorio",
-  "¿Qué páginas tienen más rage clicks?",
-];
-
 const GREETING = {
   role: "assistant",
   text: `Hola. ¿Necesitas ayuda para analizar los datos turísticos de la región hoy, ${new Date().toLocaleDateString("es-CO", { day: "numeric", month: "long", year: "numeric" })}?`,
@@ -166,22 +159,6 @@ export default function ChatPanel({ ask, isThinking, pendingQuestion, onPendingH
             </div>
           ))}
           {isThinking && <ThinkingBubble />}
-        </div>
-
-        {/* Chips de sugerencias */}
-        <div className="suggestion-chips" style={{ borderTop: "1px solid var(--border-sidebar)", paddingTop: "8px" }}>
-          <span className="chips-label">Preguntas rápidas</span>
-          {STARTER_QUESTIONS.map((q) => (
-            <button
-              key={q}
-              className="chip-btn"
-              onClick={() => send(q)}
-              disabled={isThinking}
-              aria-label={`Preguntar: ${q}`}
-            >
-              {q}
-            </button>
-          ))}
         </div>
 
         {/* Input */}

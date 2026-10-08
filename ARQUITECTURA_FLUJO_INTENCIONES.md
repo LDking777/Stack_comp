@@ -93,7 +93,7 @@ api-service-v2/
 │       ├── App.jsx               # Composición tablero + burbuja + panel
 │       ├── api.js                # Cliente HTTP (API_BASE recorta "/" final)
 │       └── components/           # BIDashboard.jsx, ChatPanel.jsx, AnswerCard.jsx
-├── tests/                        # pytest (43 pruebas; testpaths=tests en pytest.ini)
+├── tests/                        # pytest (47 pruebas; testpaths=tests en pytest.ini)
 ├── supabase/
 │   └── migrations/
 │       ├── 20261003000000_init_schema_and_mock_data.sql   # Esquema DDL + datos mock
@@ -235,7 +235,7 @@ Abre en tu navegador:
 ### 6.3. Ejecutar la Suite de Pruebas Automatizadas
 ```powershell
 $env:PYTHONIOENCODING="utf-8"
-.\venv\Scripts\python.exe -m pytest -q     # 43 pruebas, no llama al proveedor real
+.\venv\Scripts\python.exe -m pytest -q     # 47 pruebas, no llama al proveedor real
 ```
 Las pruebas que sí invocan al proveedor llevan el marker `live_llm` y quedan excluidas por defecto.
 
@@ -380,6 +380,7 @@ Registro de defectos detectados durante la implementación, con su estado actual
 6. **`insights_service` sin `await`.** La llamada asíncrona al LLM no se esperaba, devolviendo un coroutine en lugar de la respuesta. Corregido.
 7. **Importación de nombre privado.** Se importaba `_COUNTRY_ALIASES` desde otro módulo. Renombrado a `COUNTRY_ALIASES`.
 8. **Clave de API expuesta en `.env`.** Rotada por el usuario; la clave activa es ahora del formato `AQ.Ab8...` y responde correctamente.
+9. **Definiciones respondidas con KPIs y sin guía.** "¿qué es engagement?" se clasificaba como `TRIGGER_KPIS` y devolvía cifras que no contestaban la pregunta; las consultas fuera de dominio recibían el mensaje genérico de clarificación sin ejemplos. Resuelto con `_definition_reply` en `intent_router.py` (glosario determinista, sin LLM, que explica el término y sugiere una pregunta de ejemplo), mensajes de clarificación con ejemplos y una regla nueva en `ROUTER_SYSTEM_PROMPT`. Se quitaron además las preguntas rápidas (`STARTER_QUESTIONS`) y su CSS muerto en `ChatPanel.jsx` / `App.css`.
 
 ### 10.2. Pendientes
 
@@ -409,6 +410,7 @@ Registro de defectos detectados durante la implementación, con su estado actual
 13. **Vercel: 404 `{"detail":"Not Found"}` en cada peticion.** `VITE_API_URL` se definio con barra final y `api.js` concatenaba `/api/v1/...`, produciendo `https://...onrender.com//api/v1/...`. Starlette no matchea rutas con doble barra. Medido contra el backend real: `//api/v1/health` -> 404 con `detail`, `/api/v1/health` -> 200. `API_BASE` ahora recorta barras finales (commit `3180227`) y la variable quedo sin `/`. Recordar que Vite inyecta `VITE_*` en el build: sin redeploy no hay cambio.
 14. **Limpieza del v1 y documentacion alineada.** Eliminados de la raiz `app.py`, `ai_clients.py`, `telegram_bot.py`, `knowledge_base.py`, `test_keys.py`, `test_models.py`, `test_intent_flow.py`, `check_supabase.py`, `static/` y `templates/`. `README.md` reescrito para v2 (FastAPI + React + Supabase y guia de despliegue). `AGENTS.md` actualizado: mapa real del repo, comandos de prueba, seccion 6 con las tres trampas de despliegue, seccion 8 (Render + Vercel) y seccion 9 (regla de documentacion). Nuevo hook `.githooks/pre-commit` que bloquea commits de codigo sin documentacion en el mismo commit (`SKIP_DOCS=1` para saltarselo); activar con `git config core.hooksPath .githooks`.
 15. **Proyecto independizado en un solo repositorio.** `origin` (`LDking777/api-service-v2`) seguia siendo el v1 Flask y fue la causa raiz del `ModuleNotFoundError` del caso 12 cuando Render apuntaba a ese repo. Se revirtio `api-service-v2/main` a su commit v1 (`3d11d6e`, force-with-lease) para dejarlo como estaba, se elimino el remoto `origin` de este clon y la rama local `main` (que apuntaba a v1). Fuente unica: `stack` (`LDking777/Stack_comp`), con `pdn_qa` y `developer` en `f2f2b5e`.
+16. **Glosario determinista y guía para preguntas fuera de dominio.** `_definition_reply` (backend) reconoce peticiones de definición ("¿qué es engagement?", "explícame las rage clicks") y responde con el término, su significado y una pregunta de ejemplo, sin gastar una llamada al LLM y funcionando aunque el proveedor caiga. Para términos desconocidos guía al usuario hacia los que sí conoce. El mensaje de clarificación del fallback (`_heuristic_fallback`) y el default de `main.py` incluyen ejemplos, y `ROUTER_SYSTEM_PROMPT` instruye a devolver `TRIGGER_CLARIFICATION` con explicación para definiciones/fuera de dominio. Se añaden 4 pruebas (`tests/test_router_definitions.py`, 47 en total, 42 pasan y 5 saltan) que fijan que una pregunta de análisis no se secuestra como definición. En el frontend se eliminaron `STARTER_QUESTIONS` (preguntas rápidas) y su CSS en `App.css`; `npm run lint` y `npm run build` pasan.
 
 
 

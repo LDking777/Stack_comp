@@ -57,7 +57,7 @@ npm run dev        # http://localhost:3000
 ### 3. Pruebas
 
 ```powershell
-.\venv\Scripts\python.exe -m pytest        # 43 pruebas, sin llamar al LLM real
+.\venv\Scripts\python.exe -m pytest        # 47 pruebas, sin llamar al LLM real
 ```
 
 Las que llaman al proveedor real llevan el marker `live_llm` y no corren por defecto.

@@ -1141,49 +1141,6 @@
   font-style: italic;
 }
 
-/* ── Chips de sugerencias ── */
-.suggestion-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-  padding: 8px 12px 6px;
-  flex-shrink: 0;
-}
-
-.chips-label {
-  width: 100%;
-  font-size: 0.61rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
-  color: var(--text-muted);
-  padding: 0 2px 2px;
-}
-
-.chip-btn {
-  display: inline-flex;
-  align-items: center;
-  padding: 4px 9px;
-  font-family: var(--font-sans);
-  font-size: 0.7rem;
-  font-weight: 500;
-  color: var(--text-secondary);
-  background: var(--tint-2);
-  border: 1px solid var(--border-card);
-  border-radius: var(--radius-full);
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s, border-color 0.15s;
-  white-space: nowrap;
-}
-
-.chip-btn:hover:not(:disabled) {
-  background: var(--tint-4);
-  color: var(--text-primary);
-  border-color: var(--blue-border);
-}
-
-.chip-btn:disabled { opacity: 0.45; cursor: not-allowed; }
-
 /* ── Input bar ── */
 .chat-input-bar {
   display: flex;
@@ -1494,49 +1451,6 @@
   padding: 2px 7px;
   border-radius: var(--radius-full);
   margin-top: 6px;
-}
-
-/* Suggestion chips */
-.suggestion-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  padding: 6px 14px 4px;
-  flex-shrink: 0;
-}
-
-.chip-btn {
-  display: inline-flex;
-  align-items: center;
-  padding: 5px 10px;
-  font-family: var(--font-sans);
-  font-size: 0.72rem;
-  font-weight: 500;
-  color: var(--text-secondary);
-  background: var(--tint-2);
-  border: 1px solid var(--border-card);
-  border-radius: var(--radius-full);
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s, border-color 0.15s;
-  white-space: nowrap;
-}
-
-.chip-btn:hover:not(:disabled) {
-  background: var(--tint-4);
-  color: var(--text-primary);
-  border-color: var(--blue-border);
-}
-
-.chip-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-
-.chips-label {
-  width: 100%;
-  font-size: 0.64rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-muted);
-  padding: 0 2px;
 }
 
 /* Barra de input */
