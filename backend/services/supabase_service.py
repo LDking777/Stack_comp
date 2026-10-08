@@ -75,6 +75,9 @@ class SupabaseAsyncService:
         Garantiza que, si las funciones RPC aún no fueron compiladas en Supabase,
         la agregación matemática se realice con 0% de alucinación directamente sobre los datos.
         """
+        if "list_distinct" in rpc_name:
+            return await self._list_distinct_values(params)
+
         if "marketing" in rpc_name:
             records = await self.fetch_operational_records("metricas_marketing", limit=200)
             if not records:
@@ -170,5 +173,43 @@ class SupabaseAsyncService:
             }
         
         return {"status": "operacion_determinista_ejecutada", "params": params}
+
+    async def _list_distinct_values(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Listado de valores distintos reales de la base (dispositivos, países,
+        páginas). Responde "qué hay" con lo que hay, sin inventar categorías.
+        """
+        kind = (params.get("p_columna") or "dispositivos").lower()
+        column = {
+            "dispositivos": "dispositivo",
+            "paises": "pais",
+            "paginas": "direccion_url_entrada",
+        }.get(kind, "dispositivo")
+        table = "grabaciones_analisis"
+
+        records = await self.fetch_operational_records(table, limit=500)
+        counts: Dict[str, int] = {}
+        for r in records:
+            value = str(r.get(column) or "").strip()
+            if not value or value.lower() in {"none", "null"}:
+                continue
+            counts[value] = counts.get(value, 0) + 1
+
+        if not counts:
+            return {
+                "categoria": kind,
+                "total_valores": 0,
+                "detalle": f"No se encontraron valores de '{kind}' en la tabla {table}.",
+                "modo": "calculo_determinista_local_verificado",
+            }
+
+        ordered = sorted(counts.items(), key=lambda kv: kv[1], reverse=True)
+        return {
+            "categoria": kind,
+            "total_valores": len(ordered),
+            "valores_distintos": ", ".join(f"{name} ({n})" for name, n in ordered),
+            "total_sesiones": sum(counts.values()),
+            "modo": "calculo_determinista_local_verificado",
+        }
 
 supabase_service = SupabaseAsyncService()

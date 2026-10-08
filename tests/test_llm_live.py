@@ -89,3 +89,35 @@ async def test_la_latencia_del_router_cabe_en_el_presupuesto(caplog):
     assert route_stats()["llm_responses"] == 1, (
         f"el router tardo {latency_ms:.0f}ms y cayo al fallback"
     )
+
+
+async def test_el_heavy_path_genera_narrativa_con_el_proveedor():
+    """
+    El Heavy Path tambien va al LLM con `QualitativeInsightResponse`. Como el
+    fallback produce un insight valido (AGENTS.md, trampa 1), la asercion clave
+    es que `data_verified` sea True y la narrativa no sea la de `_mock_fallback_insight`:
+    la plantilla fija devuelve un summary generico que nunca debe sobrevivir.
+    """
+    from backend.services.insights_service import insights_generator
+
+    kpis = {
+        "total_sesiones": 32140,
+        "total_sesiones_afectadas": 4120,
+        "promedio_porcentaje_afectacion": 12.8,
+        "paises": {"Mexico": 18320, "Colombia": 9045},
+    }
+    insight, latency_ms = await insights_generator.generate_insight(
+        user_query="Por que se frustran los usuarios de Mexico en celular",
+        kpis=kpis,
+        toon_context=(
+            "TOON|ev:rageclick|pa:mx|dev:mob|cnt:18|pg:checkout\n"
+            "TOON|ev:deadclick|pa:mx|dev:mob|cnt:12|pg:checkout"
+        ),
+    )
+
+    assert latency_ms < settings.INSIGHTS_TIMEOUT_S * 1000
+    assert insight.data_verified is True
+    assert "Análisis cualitativo generado a partir de las métricas deterministas" not in (
+        insight.executive_summary
+    ), "cayo a la narrativa de fallback: el LLM no se uso"
+    assert insight.observations, "debe haber al menos una observacion"

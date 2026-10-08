@@ -1,0 +1,34 @@
+services:
+  # Nexo IA API — backend FastAPI
+  # La clave del error "Could not open requirements file" es rootDir: '.'
+  # El requirements.txt vive en la raiz del repo, no en backend/.
+  - type: web
+    name: nexo-ia-api
+    runtime: python
+    rootDir: "."
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: LLM_PROVIDER
+        value: groq
+      - key: GROQ_BASE_URL
+        value: https://api.groq.com/openai/v1
+      - key: GROQ_ROUTER_MODEL
+        value: openai/gpt-oss-120b
+      - key: GROQ_INSIGHTS_MODEL
+        value: openai/gpt-oss-120b
+      # Secretos: se rellenan a mano en el dashboard de Render.
+      # Con sync:false Render crea la variable vacia y no la incluye en git.
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
+      - key: SUPABASE_SECRET_KEY
+        sync: false

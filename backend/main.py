@@ -20,6 +20,13 @@ from backend.mcp.connector import mcp_registry
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("nexo_fastapi")
 
+# RPC por defecto por trigger, solo cuando el router no devolvió rpc_name.
+_DEFAULT_RPC_BY_TRIGGER = {
+    IntentTrigger.TRIGGER_KPIS: "rpc_get_marketing_kpis",
+    IntentTrigger.TRIGGER_INSIGHTS: "rpc_get_engagement_summary",
+    IntentTrigger.TRIGGER_MATH: "rpc_execute_metric_math",
+}
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("🚀 Iniciando Arquitectura MVP Flujo de Intenciones (FastAPI)...")
@@ -63,7 +70,7 @@ async def process_user_query(payload: QueryRequest):
         return QueryResponse(
             query=user_query,
             trigger=decision.trigger,
-            is_safe=False,
+            is_safe=decision.is_safe,
             formatted_message=(
                 decision.security_reasoning or 
                 "Tu consulta es ambigua o infringe las políticas de seguridad. Por favor formula tu pregunta de manera específica sobre métricas o análisis."
@@ -79,7 +86,11 @@ async def process_user_query(payload: QueryRequest):
     # --- PASO 2: Ejecución Determinista (PostgreSQL RPC en Supabase) ---
     # NUNCA el LLM calcula números; la base de datos ejecuta agregaciones deterministas
     rpc_start = time.perf_counter()
-    rpc_name = decision.rpc_intent.rpc_name or "rpc_get_marketing_kpis"
+    # La RPC se deriva del trigger. El antiguo `or "rpc_get_marketing_kpis"`
+    # hacía que cualquier decisión sin rpc_name respondiera los mismos KPIs.
+    rpc_name = decision.rpc_intent.rpc_name or _DEFAULT_RPC_BY_TRIGGER.get(
+        decision.trigger, "rpc_get_marketing_kpis"
+    )
     
     # Mapeo de parámetros extraídos para la RPC
     rpc_params = {}
@@ -93,6 +104,9 @@ async def process_user_query(payload: QueryRequest):
         rpc_params["p_operacion"] = decision.rpc_intent.math_operation.value
         rpc_params["p_tabla"] = "metricas_marketing" if "marketing" in rpc_name else "grabaciones_analisis"
         rpc_params["p_columna"] = decision.rpc_intent.target_metric or "sessionsWithMetricPercentage"
+    elif "list_distinct" in rpc_name:
+        # Listado de valores distintos: la columna a listar viene del router.
+        rpc_params["p_columna"] = decision.rpc_intent.target_metric or "dispositivos"
 
     kpis_result = await supabase_service.call_rpc(rpc_name, rpc_params)
     rpc_lat_ms = (time.perf_counter() - rpc_start) * 1000
@@ -255,6 +269,8 @@ async def healthcheck():
             "available": llm_client.available,
             "init_error": llm_client.init_error,
             "routing": route_stats(),
+            # Si `failovers` > 0, el primario quedo sin cuota y respondio el secundario.
+            "failover": llm_client.failover_stats(),
         },
         "compression": "TOON (python-toon)",
         "database": {

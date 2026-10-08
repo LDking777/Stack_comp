@@ -10,10 +10,10 @@ import {
 import AnswerCard from "./AnswerCard";
 
 export const STARTER_QUESTIONS = [
-  "¿Cuál fue la tasa de ocupación promedio en septiembre?",
-  "Comparar con 2025",
-  "Pérdidas por Cancelaciones",
-  "Resumen de Noticias Sep",
+  "¿Por qué se frustran los usuarios de México?",
+  "¿Cuál es la tasa de frustración en Colombia?",
+  "Compara engagement en celular vs escritorio",
+  "¿Qué páginas tienen más rage clicks?",
 ];
 
 const GREETING = {

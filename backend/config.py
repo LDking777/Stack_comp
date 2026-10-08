@@ -19,8 +19,14 @@ class Settings(BaseSettings):
         "*"
     ]
 
-    # LLM Provider: "gemini" (free tier) o "openai"
-    LLM_PROVIDER: str = "gemini"
+    # LLM Provider: "groq" (free tier, 1,000 req/dia), "gemini" o "openai"
+    LLM_PROVIDER: str = "groq"
+
+    # Groq API Keys & Models (free tier, sin tarjeta)
+    GROQ_API_KEY: str = ""
+    GROQ_BASE_URL: str = "https://api.groq.com/openai/v1"
+    GROQ_ROUTER_MODEL: str = "openai/gpt-oss-120b"
+    GROQ_INSIGHTS_MODEL: str = "openai/gpt-oss-120b"
 
     # OpenAI API Keys & Models
     OPENAI_API_KEY: str = ""
