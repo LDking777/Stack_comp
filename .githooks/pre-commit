@@ -1,0 +1,37 @@
+#!/bin/sh
+# pre-commit: codigo y documentacion viajan juntos.
+# Activar una vez por clon:  git config core.hooksPath .githooks
+# Salida deliberada:         SKIP_DOCS=1 git commit -m "..."
+
+[ "$SKIP_DOCS" = "1" ] && exit 0
+
+code_touched=0
+docs_touched=0
+
+for f in $(git diff --cached --name-only); do
+  case "$f" in
+    AGENTS.md|ARQUITECTURA_FLUJO_INTENCIONES.md|README.md)
+      docs_touched=1
+      ;;
+    backend/*|frontend/src/*|supabase/*|*.py|render.yaml|requirements.txt|pytest.ini|.githooks/*)
+      code_touched=1
+      ;;
+  esac
+done
+
+if [ "$code_touched" = "1" ] && [ "$docs_touched" = "0" ]; then
+  echo "" >&2
+  echo "[pre-commit] Se toco codigo sin actualizar la documentacion." >&2
+  echo "" >&2
+  echo "Sube junto al commit al menos uno de los dos:" >&2
+  echo "  AGENTS.md                          (mapa, comandos, trampas, pendientes)" >&2
+  echo "  ARQUITECTURA_FLUJO_INTENCIONES.md  (bitacora: secciones 10 y 11)" >&2
+  echo "" >&2
+  echo "  git add AGENTS.md ARQUITECTURA_FLUJO_INTENCIONES.md" >&2
+  echo "" >&2
+  echo "Si de verdad no afecta a la documentacion, repite con:" >&2
+  echo "  SKIP_DOCS=1 git commit -m \"...\"" >&2
+  exit 1
+fi
+
+exit 0

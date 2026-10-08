@@ -2,6 +2,8 @@
 
 Lee este archivo antes de tocar código. Está escrito para que un agente nuevo pueda orientarse sin antes leer todo el repositorio.
 
+> **Regla de oro:** todo cambio de código se refleja en la documentación en el mismo commit. Si modificas `backend/`, `frontend/src/`, `supabase/`, `render.yaml` o `requirements.txt`, actualiza este archivo y la bitácora (secciones 10 y 11 de `ARQUITECTURA_FLUJO_INTENCIONES.md`). El hook `.githooks/pre-commit` lo recuerda; ver sección 9.
+
 ---
 
 ## 1. Qué es este proyecto
@@ -33,29 +35,38 @@ api-service-v2/
 │   ├── schemas/                # Contratos Pydantic (router, insights, API)
 │   │   ├── router_schemas.py   # IntentRouterDecision, RPCIntentParams, IntentTrigger
 │   │   ├── insight_schemas.py  # QualitativeInsightResponse
+│   │   ├── knowledge_schemas.py# KnowledgeContext, KnowledgeEntry
 │   │   └── api_schemas.py      # QueryRequest, QueryResponse, HealthResponse
 │   └── services/               # Lógica de negocio (aqui vive el 90% del trabajo)
 │       ├── intent_router.py    # Fast Path: query -> trigger + filtros + RPC
 │       ├── supabase_service.py # RPC + fallback determinista en Python
 │       ├── toon_service.py     # Compresion TOON del contexto
 │       ├── insights_service.py # Heavy Path: KPIs -> narrativa
-│       ├── llm_client.py       # Abstraccion Gemini/OpenAI + adaptacion de esquemas
+│       ├── knowledge_service.py# Directrices de auditoria (tabla knowledge_auditoria)
+│       ├── llm_client.py       # Abstraccion Gemini/OpenAI/Groq + adaptacion de esquemas
 │       └── normalization.py    # Paises y dispositivos (acentos, alias)
-├── frontend/                   # React + Vite
+├── frontend/                   # React + Vite (desplegado en Vercel)
 │   └── src/
 │       ├── App.jsx             # Composicion tablero + burbuja + panel
-│       ├── api.js              # Cliente HTTP
+│       ├── api.js              # Cliente HTTP; API_BASE recorta el "/" final
 │       └── components/
 │           ├── BIDashboard.jsx     # KPIs, paises, dispositivos, friccion
 │           ├── ChatPanel.jsx       # Burbuja flotante + panel lateral
 │           └── AnswerCard.jsx      # Render de respuestas estructuradas
-├── supabase/migrations/        # SQL. Solo existe la migracion inicial de tablas
-├── docs/                       # Documentacion tecnica
-├── legacy/                     # v1 Flask (app.py, telegram_bot.py, ai_clients.py)
-├── ARQUITECTURA_FLUJO_INTENCIONES.md   # Arquitectura, estado real, bitacora
+├── tests/                      # pytest (pytest.ini: testpaths=tests, 43 pruebas)
+├── supabase/migrations/        # SQL: esquema inicial + knowledge_auditoria
+├── render.yaml                 # Blueprint de Render: rootDir, build, start, envVars
+├── requirements.txt            # Dependencias del backend (fuente unica)
+├── pytest.ini                  # Configuracion de pruebas
+├── README.md                   # Arranque local y despliegue
 ├── opencode.json               # Config de opencode (MCP de Supabase)
+├── ARQUITECTURA_FLUJO_INTENCIONES.md   # Arquitectura, estado real, bitacora
+├── .githooks/pre-commit        # Recuerda actualizar la documentacion
 └── .env                        # Secretos locales. Gitignored. Nunca commitear
 ```
+
+No existe `legacy/` ni `docs/`: el v1 Flask (`app.py`, `ai_clients.py`, `telegram_bot.py`, `knowledge_base.py`, `test_keys.py`, `test_models.py`, `check_supabase.py`, `static/`, `templates/`) fue **eliminado** del repositorio. Su código sigue en el historial (`git show <commit>:app.py`).
+
 
 ---
 
@@ -115,9 +126,13 @@ Invoke-WebRequest -Uri "http://127.0.0.1:8000/api/v1/health" -UseBasicParsing
 # Frontend
 cd frontend; npm run dev
 
+# Pruebas (43, sin llamar al proveedor real de LLM)
+.\venv\Scripts\python.exe -m pytest -q
+
 # Verificar que un cambio no rompio las importaciones
 .\venv\Scripts\python.exe -c "import backend.main"
 ```
+
 
 Endpoint de consulta rapida:
 
@@ -141,6 +156,10 @@ Estas cosas fallan **en silencio**. Un cambio puede romper el sistema sin que ni
 4. **Normalizacion de pais.** `Mexico` y `México` son valores distintos en la base de datos. Sin pasar por `normalization.py`, el filtro cae a `GLOBAL` y el usuario ve datos de todos los paises creyendo que filtro.
 5. **`AIza...` vs `AQ.Ab8...`.** Las claves de Gemini tienen dos formatos. El activo es `AQ.Ab8...` y esta en `.env`. No imprimir claves en salidas, commits ni mensajes.
 6. **El paquete `google.generativeai` esta deprecado** a favor de `google.genai`. Funciona, pero emite `FutureWarning` en cada arranque.
+7. **Root Directory de Render.** Si el servicio apunta a `./backend`, `uvicorn backend.main:app` falla con `ModuleNotFoundError: No module named 'backend'` porque todo el código importa `from backend...`. Debe quedar en la raíz del repo. Ver sección 8.
+8. **`VITE_API_URL` con barra final.** `api.js` concatenaba `...onrender.com/` + `/api/v1/...` = `//api/v1/...`, que Starlette no matchea: 404 `{"detail":"Not Found"}`. `API_BASE` ya recorta barras, pero el valor limpio sigue siendo el correcto. Además Vite inyecta `VITE_*` **en el build**: cambiar la variable sin redeployar no hace nada.
+9. **Deploy sin push.** Vercel y Render despliegan lo que hay en `Stack_comp`, no tu disco. Un commit local no despliega nada; la verificación es ver el bundle/nombre del asset cambiado, no asumir.
+
 
 ---
 
@@ -149,18 +168,72 @@ Estas cosas fallan **en silencio**. Un cambio puede romper el sistema sin que ni
 Al dia de hoy:
 
 - Router, Heavy Path, tablero y chat funcionando con Gemini (`LLM_PROVIDER=gemini`).
+- **API desplegada en Render** (`stack-comp.onrender.com`) y **frontend en Vercel** (`stack-comp.vercel.app`), verificados con `curl`.
 - `insights_service.py` sin llamada asincrona sin await, resuelto.
 - Fallo de filtro de pais, resuelto.
 - Compresion TOON verificada.
+- v1 Flask eliminado del repo; `README.md` reescrito para v2.
 
 Pendientes, en orden de impacto:
 
 1. **RPCs sin desplegar.** Es el pendiente critico. Hasta que existan en Supabase, la agregacion no ocurre en PostgreSQL: la sustituye el fallback de Python. Ver seccion 10.2 del documento de arquitectura.
 2. **Prompt y esquema desalineados.** El esquema permite combinaciones inconsistentes de trigger y RPC. Se necesita validacion cruzada.
-3. **Saludo inicial no se renderiza** en `ChatPanel.jsx` (el mensaje lleva `text` pero se pinta via `payload`).
-4. **v1 sin reubicar** en `legacy/`. `README.md` todavia describe la app Flask de CaldasTour.
-5. **MCP de Supabase** requiere reiniciar opencode y autorizar por OAuth.
+3. **Sin CI.** El push dispara el deploy sin correr `pytest`, `npm run lint` ni `npm run build`. Un error solo se ve en produccion.
+4. **Blueprint de Render no vinculado.** `render.yaml` existe pero el servicio se configuro a mano en el dashboard: la fuente real de la config es el dashboard, no el repo. Vincularlo para eliminar el drift.
+5. **Saludo inicial no se renderiza** en `ChatPanel.jsx` (el mensaje lleva `text` pero se pinta via `payload`).
+6. **MCP de Supabase** requiere reiniciar opencode y autorizar por OAuth.
+7. **`google.generativeai` deprecado**, migrar a `google.genai`.
 
-Ya resuelto en esta sesion: `requirements.txt` completo y en UTF-8, `.env` alineado con `config.py`, esquema Pydantic adaptado a Gemini, filtro de pais normalizado y TOON verificado.
+Ya resuelto en estas sesiones: `requirements.txt` completo y en UTF-8, `.env` alineado con `config.py`, esquema Pydantic adaptado a Gemini, filtro de pais normalizado, TOON verificado, despliegues Render + Vercel funcionando y limpieza del v1.
 
 El detalle completo de errores corregidos y pendientes vive en las secciones 10 y 11 de `ARQUITECTURA_FLUJO_INTENCIONES.md`. Actualiza esa bitacora al cerrar cada tarea.
+
+---
+
+## 8. Despliegue (Render + Vercel)
+
+| Pieza | Servicio | URL | Origen |
+| --- | --- | --- | --- |
+| API FastAPI | Render | `stack-comp.onrender.com` | Repo `Stack_comp`, rama `pdn_qa` |
+| Frontend React | Vercel | `stack-comp.vercel.app` | Repo `Stack_comp`, rama `pdn_qa` |
+
+Configuracion real del servicio en Render (hoy en el dashboard, no sincronizada con `render.yaml`):
+
+- **Root Directory:** vacio (raiz del repo). Con `./backend` el arranque muere con `ModuleNotFoundError` — ver trampa 7.
+- **Build Command:** `pip install -r requirements.txt`
+- **Start Command:** `uvicorn backend.main:app --host 0.0.0.0 --port $PORT`
+- **Health Check Path:** `/api/v1/health`
+
+En Vercel: `VITE_API_URL=https://stack-comp.onrender.com` sin `/` final, y todo cambio de variable exige redeploy (ver trampa 8).
+
+Hay dos remotos: `origin` (`LDking777/api-service-v2`, donde `main` todavia es el v1 Flask) y `stack` (`LDking777/Stack_comp`, la fuente real de deploy). El codigo que importa se empuja a `stack/pdn_qa`.
+
+Verificacion posterior al deploy:
+
+1. `git ls-remote stack refs/heads/pdn_qa` debe devolver el commit que acabas de empujar.
+2. `curl https://stack-comp.onrender.com/api/v1/health` → 200 con `provider`.
+3. El asset del front cambia de nombre: `https://stack-comp.vercel.app/` → `/assets/index-<hash>.js`. Si el hash no cambio, no se desplego nada.
+
+---
+
+## 9. Regla de documentacion: codigo y .md viajan juntos
+
+Un cambio que no se documenta es deuda: el siguiente agente (o tu yo del mes que viene) toma decisiones con informacion vieja.
+
+Siempre que modifiques `backend/`, `frontend/src/`, `supabase/`, `render.yaml`, `requirements.txt`, `pytest.ini` o `.githooks/`, actualiza en el mismo commit:
+
+1. **`AGENTS.md`** — mapa, comandos, trampas conocidas y estado/pendientes (este archivo).
+2. **`ARQUITECTURA_FLUJO_INTENCIONES.md`** — anade el caso en la seccion 10.1 (corregido) o 10.2 (pendiente) y cierra en la 11.
+
+Para que no dependa de la memoria, el hook `.githooks/pre-commit` bloquea el commit si tocaste archivos de codigo sin llevar documentacion staged. Se activa una vez por clon:
+
+```powershell
+git config core.hooksPath .githooks
+```
+
+Salida deliberada cuando el cambio realmente no afecta la documentacion:
+
+```powershell
+$env:SKIP_DOCS=1; git commit -m "..."
+```
+

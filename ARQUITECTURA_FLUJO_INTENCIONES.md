@@ -75,25 +75,38 @@ api-service-v2/
 │   ├── schemas/
 │   │   ├── __init__.py
 │   │   ├── router_schemas.py     # Esquemas para Structured Outputs del Router
-│   │   ├── insight_schemas.py    # Esquemas Pydantic v2 para diagnósticos de GPT-4o
+│   │   ├── insight_schemas.py    # Esquemas Pydantic v2 para el Heavy Path
+│   │   ├── knowledge_schemas.py  # KnowledgeContext / KnowledgeEntry (auditoría)
 │   │   └── api_schemas.py        # Modelos de Request/Response y métricas de latencia
 │   ├── services/
-│   │   ├── __init__.py
-│   │   ├── intent_router.py      # Router Fast Path (gpt-4o-mini)
+│   │   ├── intent_router.py      # Router Fast Path
 │   │   ├── supabase_service.py   # Cliente asíncrono para Supabase REST y PostgreSQL RPC
 │   │   ├── toon_service.py       # Serializador y compresor TOON
-│   │   └── insights_service.py   # Generador de síntesis cualitativa (GPT-4o)
+│   │   ├── insights_service.py   # Generador de síntesis cualitativa
+│   │   ├── knowledge_service.py  # Directrices de auditoría (tabla knowledge_auditoria)
+│   │   ├── llm_client.py         # Abstracción Gemini / OpenAI / Groq
+│   │   └── normalization.py      # Normalización de países y dispositivos
 │   └── mcp/
-│       ├── __init__.py
 │       └── connector.py          # Interfaces abstractas MCP (Tools y Resources)
+├── frontend/                     # React + Vite (desplegado en Vercel)
+│   └── src/
+│       ├── App.jsx               # Composición tablero + burbuja + panel
+│       ├── api.js                # Cliente HTTP (API_BASE recorta "/" final)
+│       └── components/           # BIDashboard.jsx, ChatPanel.jsx, AnswerCard.jsx
+├── tests/                        # pytest (43 pruebas; testpaths=tests en pytest.ini)
 ├── supabase/
 │   └── migrations/
-│       ├── 20261003000000_init_schema_and_mock_data.sql  # Esquema DDL + datos mock
-│       └── 20261003000001_rpc_analytical_functions.sql   # Funciones RPC deterministas
-├── test_intent_flow.py           # Suite de pruebas automatizadas del pipeline
-├── check_supabase.py             # Script de validación de conexión a base de datos
+│       ├── 20261003000000_init_schema_and_mock_data.sql   # Esquema DDL + datos mock
+│       └── 20261003010000_knowledge_auditoria.sql          # Tabla de directrices
+├── render.yaml                    # Blueprint de Render (rootDir, build, start, envVars)
+├── requirements.txt               # Dependencias del backend (fuente única)
+├── README.md                      # Arranque local y despliegue
+├── AGENTS.md                      # Guía de trabajo (lee esto primero)
 └── ARQUITECTURA_FLUJO_INTENCIONES.md  # Esta documentación
 ```
+
+El v1 Flask (`app.py`, `ai_clients.py`, `telegram_bot.py`, `knowledge_base.py`, `static/`, `templates/`, scripts de prueba sueltos) fue eliminado del repositorio: su código solo existe en el historial de git.
+
 
 ---
 
@@ -222,8 +235,10 @@ Abre en tu navegador:
 ### 6.3. Ejecutar la Suite de Pruebas Automatizadas
 ```powershell
 $env:PYTHONIOENCODING="utf-8"
-.\venv\Scripts\python.exe test_intent_flow.py
+.\venv\Scripts\python.exe -m pytest -q     # 43 pruebas, no llama al proveedor real
 ```
+Las pruebas que sí invocan al proveedor llevan el marker `live_llm` y quedan excluidas por defecto.
+
 
 ### 6.4. Consumir desde el Frontend (React)
 ```javascript
@@ -242,7 +257,8 @@ console.log("Mensaje renderizable:", data.formatted_message);
 
 ## 7. Resumen de Cambios Frente al Proyecto Anterior
 
-1. **Eliminación de la Carrera de IAs:** Se removió la ejecución simultánea con competencia de hilos entre OpenAI y Gemini en `app.py` y `telegram_bot.py`.
+1. **Eliminación de la Carrera de IAs:** Se removió la ejecución simultánea con competencia de hilos entre OpenAI y Gemini que existía en el v1 (`app.py` y `telegram_bot.py`, hoy eliminados del repositorio).
+
 2. **Desacoplamiento Determinista vs. Probabilístico:** El LLM ya no realiza cálculos agregados directamente ni lee tablas sin estructurar; la base de datos PostgreSQL ejecuta las agregaciones vía RPC.
 3. **Capa TOON Activa:** Implementación de compresión token-eficiente previa a la síntesis narrativa.
 4. **Arquitectura Asíncrona:** Migración del núcleo analítico a FastAPI con esquemas Pydantic v2 y soporte para conectores MCP.
@@ -257,7 +273,7 @@ Esta sección corrige afirmaciones anteriores de este documento que no coincidí
 
 | Afirmación previa | Estado real |
 | --- | --- |
-| Las 3 RPCs existen en Supabase | **Falso.** Solo existe `20261003000000_init_schema_and_mock_data.sql`. El archivo `20261003000001_rpc_analytical_functions.sql` nunca se creó. |
+| Las 3 RPCs existen en Supabase | **Falso.** Solo hay dos migraciones: `20261003000000_init_schema_and_mock_data.sql` y `20261003010000_knowledge_auditoria.sql`. El archivo de RPC analíticas nunca se creó. |
 | PostgreSQL ejecuta la agregación | **Parcial.** Las llamadas RPC devuelven `404`; opera `_fallback_deterministic_aggregation` en Python. |
 | `gpt-4o-mini` / `gpt-4o` como modelos | **Cambiado.** Proveedor configurable vía `LLM_PROVIDER`; por defecto `gemini-2.5-flash`. |
 | Insights generados por GPT-4o | **Cambiado.** `insights_service.py` usa `llm_client`, hoy Gemini. |
@@ -371,11 +387,14 @@ Registro de defectos detectados durante la implementación, con su estado actual
 2. **Prompt y esquema desalineados.** El test del router con la consulta de DeadClicks devolvió `TRIGGER_KPIS` junto a `rpc_name: rpc_get_engagement_summary`. El esquema permite combinaciones inconsistentes porque no valida que el trigger y la RPC correspondan.
 3. **Saludo inicial no se renderiza.** `ChatPanel.jsx` construye el mensaje de bienvenida con `text`, pero los mensajes del asistente se pintan siempre vía `<AnswerCard payload={m.payload} />`. El texto del saludo no llega a verse.
 4. **Pregunta repetida idéntica.** `App.jsx` deduplica con una ref que compara la última pregunta; seleccionar dos veces la misma tarjeta no dispara un segundo envío.
-5. **Dependencias ausentes en `requirements.txt`.** Faltan `fastapi`, `uvicorn`, `pydantic-settings` y `toon`, sin los que el servicio no arranca desde cero.
-6. **Advertencia de SDK obsoleto.** `google.generativeai` está deprecado a favor de `google.genai`. Funciona, pero conviene migrar.
-7. **Acceso MCP no disponible en la sesión actual.** Requiere reiniciar opencode y autorizar por OAuth.
-8. **Campos muertos en el contrato.** Ver 9.3.
-9. **v1 sin reubicar.** `app.py`, `ai_clients.py`, `telegram_bot.py`, `knowledge_base.py`, `test_keys.py`, `test_models.py`, `static/` y `templates/` siguen en la raíz. `README.md` aún describe la app Flask de CaldasTour.
+5. **Advertencia de SDK obsoleto.** `google.generativeai` está deprecado a favor de `google.genai`. Funciona, pero conviene migrar.
+6. **Acceso MCP no disponible en la sesión actual.** Requiere reiniciar opencode y autorizar por OAuth.
+7. **Campos muertos en el contrato.** Ver 9.3.
+8. **Sin CI/CD.** El push dispara el despliegue en Render y Vercel sin ejecutar antes `pytest`, `npm run lint` ni `npm run build`: un error solo se manifiesta en producción. Ver `AGENTS.md` sección 7.
+9. **Blueprint de Render no vinculado.** `render.yaml` describe `rootDir`, build y start, pero el servicio se configuró a mano en el dashboard (Root Directory, comandos). La fuente real de la configuración es el dashboard, no el repo: hay *drift* y el próximo cambio manual puede romper el arranque. Ver `AGENTS.md` sección 8.
+
+> Resueltos en esta sesión: *"Dependencias ausentes en `requirements.txt`"* (ver 11.1) y *"v1 sin reubicar"* (ver 11.1, se eliminó el v1 completo del repositorio).
+
 
 ---
 
@@ -383,9 +402,13 @@ Registro de defectos detectados durante la implementación, con su estado actual
 
 ### 11.1. Corregido en esta sesion
 
-9. **`requirements.txt` incompleto y corrupto.** Le faltaban `fastapi`, `uvicorn`, `pydantic-settings` y `python-toon`, y venia codificado en UTF-16LE, lo que lo hacia ilegible como texto plano. Reescrito en UTF-8, agrupado por funcion, separando las dependencias de `legacy/` y verificado con `pip install --dry-run`.
+9. **`requirements.txt` incompleto y corrupto.** Le faltaban `fastapi`, `uvicorn`, `pydantic-settings` y `python-toon`, y venia codificado en UTF-16LE, lo que lo hacia ilegible como texto plano. Reescrito en UTF-8 y agrupado por funcion; en esta sesion se elimino ademas la seccion heredada del v1 Flask, ya que esos archivos ya no existen en el repo.
 10. **`.env` desalineado con `config.py`.** Faltaban `LLM_PROVIDER` y los modelos de Gemini. Ahora estan explicitos, `PORT` paso de 5000 (Flask) a 8000 (FastAPI) y las claves de Telegram quedaron marcadas como legado.
 11. **Puntos de gasto de tokens medidos y documentados.** Ver seccion 9. Los numeros provienen de ejecucion real sobre el esquema actual, no de estimaciones.
+12. **Render: `ModuleNotFoundError: No module named 'backend'`.** El servicio tenia Root Directory `./backend`, asi que `uvicorn backend.main:app` arrancaba dentro de `backend/`, donde el paquete `backend` no existe; el codigo importa `from backend...` en todas partes. El build no fallaba porque `backend/requirements.txt` incluye `-r ../requirements.txt`. Root Directory dejado en la raiz del repo, con `buildCommand: pip install -r requirements.txt` y `startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT`. Verificado: `curl https://stack-comp.onrender.com/api/v1/health` -> 200 con `provider: groq`.
+13. **Vercel: 404 `{"detail":"Not Found"}` en cada peticion.** `VITE_API_URL` se definio con barra final y `api.js` concatenaba `/api/v1/...`, produciendo `https://...onrender.com//api/v1/...`. Starlette no matchea rutas con doble barra. Medido contra el backend real: `//api/v1/health` -> 404 con `detail`, `/api/v1/health` -> 200. `API_BASE` ahora recorta barras finales (commit `3180227`) y la variable quedo sin `/`. Recordar que Vite inyecta `VITE_*` en el build: sin redeploy no hay cambio.
+14. **Limpieza del v1 y documentacion alineada.** Eliminados de la raiz `app.py`, `ai_clients.py`, `telegram_bot.py`, `knowledge_base.py`, `test_keys.py`, `test_models.py`, `test_intent_flow.py`, `check_supabase.py`, `static/` y `templates/`. `README.md` reescrito para v2 (FastAPI + React + Supabase y guia de despliegue). `AGENTS.md` actualizado: mapa real del repo, comandos de prueba, seccion 6 con las tres trampas de despliegue, seccion 8 (Render + Vercel) y seccion 9 (regla de documentacion). Nuevo hook `.githooks/pre-commit` que bloquea commits de codigo sin documentacion en el mismo commit (`SKIP_DOCS=1` para saltarselo); activar con `git config core.hooksPath .githooks`.
+
 
 ### 11.2. Pendiente de confirmacion
 
