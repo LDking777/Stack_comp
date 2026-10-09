@@ -25,6 +25,9 @@ from backend.services import intent_router as intent_router_module
 from backend.services import llm_client as llm_client_module
 from backend.services import datosgov_service as datosgov_module
 from backend.services import supabase_service as supabase_module
+from backend.services.document_service import RAG_SYSTEM_PROMPT
+from backend.services.insights_service import HEAVY_PATH_SYSTEM_PROMPT
+from backend.services.intent_router import ROUTER_SYSTEM_PROMPT
 
 from tests.conftest import FakeLLM, make_decision
 
@@ -48,10 +51,34 @@ def test_build_query_spec_incluye_descripcion_de_capacidad():
         "Necesito una IPS cerca de Manizales",
         "¿Dónde puedo ir a un hospital en Caldas?",
         "Busca IPS por NIT 900497151",
+        "Necesito en Manizales saber quienes tienen el apartado de urgencias",
     ],
 )
 def test_detecta_busquedas_de_sedes_ips(query):
     assert _is_facility_search_query(query)
+
+
+def test_pregunta_sobre_urgencias_detecta_la_capacidad():
+    assert _facility_capacity_filters(
+        "Necesito en Manizales saber quienes tienen el apartado de urgencias"
+    ) == {"descripcion_capacidad_filter": "Urgencias"}
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "¿Cuál es el teléfono de la IPS en Manizales?",
+        "Necesito llamar al hospital en Caldas",
+    ],
+)
+def test_detecta_busqueda_de_telefono_institucional(query):
+    assert _is_facility_search_query(query)
+
+
+def test_prompts_de_respuesta_fijan_el_espanol():
+    assert "siempre en español" in ROUTER_SYSTEM_PROMPT.lower()
+    assert "siempre en español" in HEAVY_PATH_SYSTEM_PROMPT.lower()
+    assert "siempre en español" in RAG_SYSTEM_PROMPT.lower()
 
 
 def test_detecta_pregunta_abierta_sobre_ips_sin_fabricar_nombre():
@@ -246,6 +273,7 @@ def test_busqueda_ips_por_municipio_devuelve_directorio_sin_llm(client, monkeypa
                     "nombre": "Instituto Oftalmológico de Caldas",
                     "sede": "Sede Centro",
                     "direccion": "Calle 10",
+                    "telefonos": ["606-123-4567"],
                     "municipio": "MANIZALES",
                     "departamento": "Caldas",
                     "naturaleza": ["Privada"],
@@ -276,8 +304,98 @@ def test_busqueda_ips_por_municipio_devuelve_directorio_sin_llm(client, monkeypa
     assert captured["filters"]["nom_descripcion_capacidad"] == "Pediátrica"
     assert "Instituto Oftalmológico de Caldas" in body["formatted_message"]
     assert "Calle 10" in body["formatted_message"]
+    assert "606-123-4567" in body["formatted_message"]
     assert "no incluye coordenadas" in body["formatted_message"]
 
+
+def test_busqueda_urgencias_en_manizales_lista_sedes(client, monkeypatch):
+    captured = {}
+
+    async def resolve_location(_query):
+        return "MANIZALES", "Caldas", False
+
+    async def execute(spec):
+        captured.update(spec)
+        return {
+            "establecimientos": [
+                {
+                    "nombre": "Hospital de muestra",
+                    "sede": "Sede urgencias",
+                    "direccion": "Carrera 1",
+                    "municipio": "MANIZALES",
+                    "departamento": "Caldas",
+                    "naturaleza": ["Pública"],
+                    "niveles_atencion": [],
+                    "capacidades": [
+                        {"grupo": "CONSULTORIOS", "tipo": "Urgencias", "cantidad": 2}
+                    ],
+                }
+            ],
+            "total_establecimientos": 1,
+            "resultados_limitados": False,
+            "filtros_aplicados": {
+                "municipio": "MANIZALES",
+                "nom_descripcion_capacidad": "Urgencias",
+            },
+        }
+
+    monkeypatch.setattr(
+        datosgov_module.datosgov_service, "resolve_municipio_mention", resolve_location
+    )
+    monkeypatch.setattr(datosgov_module.datosgov_service, "execute", execute)
+    response = client.post(
+        "/api/v1/query",
+        json={
+            "query": (
+                "Necesito en Manizales saber quienes tienen el apartado de urgencias"
+            )
+        },
+    )
+    body = response.json()
+
+    assert response.status_code == 200
+    assert client.llm_fake.calls == 0
+    assert captured["operation"] == "list_ips"
+    assert captured["filters"]["municipio"] == "MANIZALES"
+    assert captured["filters"]["nom_descripcion_capacidad"] == "Urgencias"
+    assert "Hospital de muestra" in body["formatted_message"]
+
+
+def test_consulta_telefono_devuelve_solo_numero_publicado(client, monkeypatch):
+    async def resolve_location(_query):
+        return "MANIZALES", "Caldas", False
+
+    async def execute(spec):
+        assert spec["operation"] == "list_ips"
+        return {
+            "establecimientos": [
+                {
+                    "nombre": "Hospital de muestra",
+                    "sede": "Sede principal",
+                    "direccion": "Carrera 1",
+                    "telefonos": ["606-123-4567"],
+                    "municipio": "MANIZALES",
+                    "departamento": "Caldas",
+                    "naturaleza": ["Pública"],
+                    "niveles_atencion": ["2"],
+                    "capacidades": [],
+                }
+            ],
+            "total_establecimientos": 1,
+            "resultados_limitados": False,
+        }
+
+    monkeypatch.setattr(
+        datosgov_module.datosgov_service, "resolve_municipio_mention", resolve_location
+    )
+    monkeypatch.setattr(datosgov_module.datosgov_service, "execute", execute)
+    response = client.post(
+        "/api/v1/query",
+        json={"query": "¿Cuál es el teléfono de la IPS en Manizales?"},
+    )
+
+    assert response.status_code == 200
+    assert "606-123-4567" in response.json()["formatted_message"]
 
 def test_busqueda_ips_por_nit_no_muestra_el_nit(client, monkeypatch):
     captured = {}

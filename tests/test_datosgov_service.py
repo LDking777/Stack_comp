@@ -211,6 +211,7 @@ async def test_list_ips_deduplica_sede_y_no_expone_identificadores(monkeypatch):
             "nombre_prestador": "Instituto Oftalmológico",
             "nom_sede_ips": "Sede Centro",
             "direcci_n": "Calle 10",
+            "tel_fono": "606-123-4567",
             "municipio": "MANIZALES",
             "departamento": "Caldas",
             "naturaleza": "Privada",
@@ -218,6 +219,8 @@ async def test_list_ips_deduplica_sede_y_no_expone_identificadores(monkeypatch):
             "nom_grupo_capacidad": "CONSULTORIOS",
             "nom_descripcion_capacidad": "Consulta Externa",
             "capacidad": "4",
+            "email": "no-debe-salir@example.com",
+            "gerente": "Dato personal",
         },
         {
             "c_digo_prestador": "504512253",
@@ -232,6 +235,7 @@ async def test_list_ips_deduplica_sede_y_no_expone_identificadores(monkeypatch):
             "nom_grupo_capacidad": "CONSULTORIOS",
             "nom_descripcion_capacidad": "Procedimientos",
             "capacidad": "2",
+            "tel_fono": "606-123-4567",
         },
     ]
 
@@ -255,8 +259,32 @@ async def test_list_ips_deduplica_sede_y_no_expone_identificadores(monkeypatch):
     assert "c_digo_prestador" not in result["establecimientos"][0]
     assert "c_digo_sede" not in result["establecimientos"][0]
     assert "nit_ips" not in result["establecimientos"][0]
+    assert result["establecimientos"][0]["telefonos"] == ["606-123-4567"]
+    assert "email" not in result["establecimientos"][0]
+    assert "gerente" not in result["establecimientos"][0]
+    assert "tel_fono" in captured["$group"].split(",")
     assert "num_cantidad_capacidad_instalada" not in captured["$group"].split(",")
     assert captured["$where"] == "municipio='MANIZALES' AND nom_grupo_capacidad='CONSULTORIOS'"
+
+
+async def test_resuelve_municipio_explicito_sin_confundir_apartado_de_urgencias(monkeypatch):
+    svc = DatosGovService()
+
+    async def fake_query(_params):
+        return [
+            {"municipio": "MANIZALES", "departamento": "Caldas"},
+            {"municipio": "APARTADÓ", "departamento": "Antioquia"},
+            {"municipio": "MEDELLÍN", "departamento": "Antioquia"},
+        ]
+
+    monkeypatch.setattr(svc, "_query", fake_query)
+
+    assert await svc.resolve_municipio_mention(
+        "Necesito en Manizales saber quienes tienen el apartado de urgencias"
+    ) == ("MANIZALES", "Caldas", False)
+    assert await svc.resolve_municipio_mention(
+        "Necesito en Manizales y Medellín saber quienes tienen urgencias"
+    ) == (None, None, True)
 
 
 async def test_list_ips_acepta_nit_como_filtro_interno(service):

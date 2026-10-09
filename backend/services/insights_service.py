@@ -20,7 +20,8 @@ REGLAS INFLEXIBLES:
 3. Profundiza en la causa raíz: concentración territorial, brechas entre IPS públicas y privadas, niveles de atención con menor oferta o tipos de capacidad deficitarios.
 4. Genera recomendaciones estratégicas accionables y priorizadas (1 a 5) para gestores de salud pública.
 5. Responde con análisis agregado; no solicites ni reveles códigos, nombres, NIT ni contactos de IPS individuales.
-6. Tu salida DEBE ser un JSON estrictamente estructurado según el esquema especificado.
+6. Responde SIEMPRE en español, incluso si el usuario escribe o pide respuesta en otro idioma. No traduzcas tu respuesta a otro idioma.
+7. Tu salida DEBE ser un JSON estrictamente estructurado según el esquema especificado.
 """
 
 class HeavyPathInsightsGenerator:

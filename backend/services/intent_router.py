@@ -387,7 +387,8 @@ REGLAS DE EXTRACCIÓN DE FILTROS (CRÍTICAS):
 - Si menciona un subtipo descrito en la fuente (por ejemplo, pediátrica, urgencias, observación, neonatal, cirugía, partos, hemodiálisis o salud mental), DEBES poblar 'descripcion_capacidad_filter' con el valor exacto de 'nom_descripcion_capacidad'. Ejemplo: "camas pediátricas" -> 'Pediátrica'; "UCI neonatal" -> 'Cuidado Intensivo Neonatal'.
 - Si pide un agregado para un prestador específico y menciona NIT, código o nombre, usa el campo de filtro correspondiente. Nunca coloques estos campos en 'group_by' ni devuelvas sus valores. Un nombre parcial solo se acepta si identifica un único prestador.
 - Si la consulta pide un desglose ("por departamento", "cada departamento", "por naturaleza", "por descripción de capacidad"), DEBES poblar 'group_by' con una columna analítica: 'departamento', 'municipio', 'naturaleza', 'num_nivel_atencion', 'nom_grupo_capacidad' o 'nom_descripcion_capacidad'.
-- No devuelvas ni listes códigos, nombres, NIT, sedes, gerente, dirección, email ni teléfono. Estos datos se permiten únicamente como filtros internos de agregados por IPS; nunca como dimensiones o valores de respuesta.
+- No devuelvas códigos, NIT, datos personales, email ni teléfonos en respuestas agregadas. La operación `list_ips` puede devolver nombre de sede, dirección y teléfono institucional publicados en el dataset; jamás revela NIT ni códigos.
+- Responde y guía siempre en español, incluso cuando el usuario escriba en otro idioma o solicite explícitamente otro idioma.
 - Estos campos NO son opcionales: son el único mecanismo por el que el sistema recorta los datos. Si los dejas en null, el usuario verá cifras de todo el país en lugar de las suyas.
 """
 

@@ -62,6 +62,7 @@ IPS_DIRECTORY_COLUMNS = (
     "nombre_prestador",
     "nom_sede_ips",
     "direcci_n",
+    "tel_fono",
     "municipio",
     "departamento",
     "naturaleza",
@@ -637,15 +638,44 @@ class DatosGovService:
             _MUNICIPIOS_TS = time.monotonic()
 
         folded_query = fold(query)
-        municipality_matches = [
-            locations
-            for folded_name, locations in _MUNICIPIO_DEPARTMENTS.items()
-            if re.search(rf"(?<!\w){re.escape(folded_name)}(?!\w)", folded_query)
-        ]
-        if not municipality_matches:
+        municipality_mentions = []
+        for folded_name, locations in _MUNICIPIO_DEPARTMENTS.items():
+            municipality_mentions.extend(
+                (match.start(), match.end(), locations)
+                for match in re.finditer(
+                    rf"(?<!\w){re.escape(folded_name)}(?!\w)", folded_query
+                )
+            )
+        if not municipality_mentions:
             return None, None, False
 
-        candidates = [location for locations in municipality_matches for location in locations]
+        municipality_mentions.sort(key=lambda mention: mention[0])
+        explicit_mentions = [
+            mention
+            for mention in municipality_mentions
+            if re.search(
+                r"\b(?:en|desde|hacia|para|cerca\s+de|municipio\s+de|ciudad\s+de)\s+$",
+                folded_query[:mention[0]],
+            )
+        ]
+        selected_mentions = explicit_mentions
+        if explicit_mentions:
+            last_end = explicit_mentions[-1][1]
+            for mention in municipality_mentions:
+                if mention[0] <= last_end:
+                    continue
+                separator = folded_query[last_end:mention[0]]
+                if re.fullmatch(r"\s*(?:,|y|o)\s*", separator):
+                    selected_mentions.append(mention)
+                    last_end = mention[1]
+        else:
+            selected_mentions = municipality_mentions
+
+        candidates = [
+            location
+            for _, _, locations in selected_mentions
+            for location in locations
+        ]
         mentioned_departments = {
             fold(department)
             for locations in _MUNICIPIO_DEPARTMENTS.values()
@@ -672,7 +702,7 @@ class DatosGovService:
         params: Dict[str, Any] = {
             "$select": (
                 "c_digo_prestador,c_digo_sede,nombre_prestador,nom_sede_ips,"
-                "direcci_n,municipio,departamento,naturaleza,num_nivel_atencion,"
+                "direcci_n,tel_fono,municipio,departamento,naturaleza,num_nivel_atencion,"
                 "nom_grupo_capacidad,nom_descripcion_capacidad,"
                 f"sum({CAPACITY_COLUMN}) as capacidad"
             ),
@@ -701,6 +731,7 @@ class DatosGovService:
                     "nombre": row.get("nombre_prestador"),
                     "sede": row.get("nom_sede_ips"),
                     "direccion": row.get("direcci_n"),
+                    "telefonos": [],
                     "municipio": row.get("municipio"),
                     "departamento": row.get("departamento"),
                     "naturaleza": [],
@@ -714,6 +745,9 @@ class DatosGovService:
             ):
                 if value is not None and value not in facility[field]:
                     facility[field].append(value)
+            phone = str(row.get("tel_fono") or "").strip()
+            if phone and phone not in facility["telefonos"]:
+                facility["telefonos"].append(phone)
             capacity = {
                 "grupo": row.get("nom_grupo_capacidad"),
                 "tipo": row.get("nom_descripcion_capacidad"),

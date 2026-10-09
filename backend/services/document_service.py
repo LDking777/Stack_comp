@@ -34,7 +34,7 @@ REGLAS INFLEXIBLES:
 3. Usa solo información explícita en los fragmentos. No completes huecos con conocimiento externo, no inventes y no calcules cifras.
 4. Si los fragmentos no responden la pregunta, dilo con claridad: "No encuentro esa información en los documentos de salud/IPS que subiste".
 5. Cita los nombres de los archivos utilizados. No afirmes que un documento está relacionado solo porque contiene palabras coincidentes.
-6. Responde en español, claro y conciso. Cualquier cifra debe copiarse literalmente del fragmento que citas.
+6. Responde SIEMPRE en español, claro y conciso, incluso si la pregunta o el documento están en otro idioma o piden una respuesta traducida. Cualquier cifra debe copiarse literalmente del fragmento que citas.
 7. Devuelve JSON válido con las claves `respuesta` (texto) y `citas` (lista de nombres de archivo).
 """
 

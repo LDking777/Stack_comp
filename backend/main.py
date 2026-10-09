@@ -65,16 +65,23 @@ _DEFAULT_OPERATION_BY_TRIGGER = {
     IntentTrigger.TRIGGER_MATH: QueryOperation.MATH.value,
 }
 _FACILITY_TERM_RE = re.compile(
-    r"\b(?:ips|clinica|hospital|centro de salud|centro medico|prestador(?:es)?)\b"
+    r"\b(?:ips|clinicas?|hospital(?:es)?|centros? de salud|centros? medicos?|prestadores?)\b"
 )
 _FACILITY_SEARCH_RE = re.compile(
     r"\b(?:cerca|cercan[oa]s?|busca|buscar|busqueda|localiza|localizar|"
     r"encuentra|encontrar|filtra|filtrar|compara|comparar|lista|listar|"
     r"recomiend[ae]|opciones|necesito|donde puedo ir|a donde puedo ir|"
-    r"que lugares|donde hay|listame|muestrame|direccion|donde queda)\b"
+    r"que lugares|donde hay|listame|muestrame|direccion|donde queda|"
+    r"telefono|telefonos|numero|llamar|contacto)\b"
 )
 _FACILITY_IDENTIFIER_SEARCH_RE = re.compile(
-    r"\b(?:nit|c[oó]digo(?:\s+de\s+prestador)?|nombre\s+de\s+(?:la\s+)?ips)\b",
+    r"\b(?:nit|c[oó]digo(?:\s+de\s+prestador)?|nombre\s+de\s+(?:la\s+)?ips|"
+    r"tel[eé]fonos?|n[uú]mero(?:\s+de\s+tel[eé]fono)?|llamar|contacto)\b",
+    re.IGNORECASE,
+)
+_DIRECTORY_PEOPLE_QUERY_RE = re.compile(
+    r"\b(?:qui[eé]n(?:es)?|cu[aá]les?)\b.*\b(?:tienen|tiene|prestan|presta|"
+    r"atienden|atiende|ofrecen|ofrece|cuentan\s+con|disponen\s+de)\b",
     re.IGNORECASE,
 )
 _FACILITY_SEARCH_RE_ACCENTED = re.compile(
@@ -155,6 +162,12 @@ def _build_query_spec(decision) -> Dict[str, Any]:
 def _is_facility_search_query(query: str) -> bool:
     folded_query = fold(query)
     has_facility = bool(_FACILITY_TERM_RE.search(folded_query))
+    capacity_filters = _facility_capacity_filters(query)
+    asks_which_providers = bool(_DIRECTORY_PEOPLE_QUERY_RE.search(query)) and bool(
+        {"grupo_capacidad_filter", "descripcion_capacidad_filter"}.intersection(
+            capacity_filters
+        )
+    )
     has_search_intent = bool(
         _FACILITY_SEARCH_RE.search(folded_query)
         or _FACILITY_SEARCH_RE_ACCENTED.search(query)
@@ -162,7 +175,7 @@ def _is_facility_search_query(query: str) -> bool:
         or re.search(r"\b(?:que|cuales?)\s+(?:ips|clinica|hospital|sedes?)\b", folded_query)
         or _FACILITY_IDENTIFIER_SEARCH_RE.search(query)
     )
-    return has_facility and has_search_intent
+    return (has_facility and has_search_intent) or asks_which_providers
 
 
 def _last_user_query(history: str) -> str:
@@ -359,6 +372,9 @@ def _format_fast_path(kpis_result: Dict[str, Any]) -> str:
             detalles = []
             if establecimiento.get("direccion"):
                 detalles.append(establecimiento["direccion"])
+            if establecimiento.get("telefonos"):
+                telefonos = ", ".join(establecimiento["telefonos"])
+                detalles.append(f"Teléfono(s): {telefonos}")
             if establecimiento.get("niveles_atencion"):
                 niveles = ", ".join(map(str, establecimiento["niveles_atencion"]))
                 detalles.append(f"nivel(es) {niveles}")
@@ -378,7 +394,8 @@ def _format_fast_path(kpis_result: Dict[str, Any]) -> str:
             "\n\nEstas son sedes registradas en REPS; el dataset tiene corte "
             "al 21 de noviembre de 2022. No confirma que hoy estén abiertas, "
             "tengan cupos, acepten tu aseguradora o presten cada servicio. "
-            "Confirma directamente antes de desplazarte. La búsqueda por "
+            "Confirma directamente antes de desplazarte. Los teléfonos, si aparecen, "
+            "son los publicados en la fuente y pueden estar desactualizados. La búsqueda por "
             "«cerca» se limita al municipio indicado: la fuente no incluye coordenadas."
         )
         filters = kpis_result.get("filtros_aplicados") or {}
