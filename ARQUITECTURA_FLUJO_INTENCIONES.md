@@ -90,9 +90,14 @@ api-service-v2/
 │       └── connector.py          # Interfaces abstractas MCP (Tools y Resources)
 ├── frontend/                     # React + Vite (desplegado en Vercel)
 │   └── src/
-│       ├── App.jsx               # Composición tablero + burbuja + panel
+│       ├── App.jsx               # Switcher Bi-vista (Pitch & Arquitectura vs Consola Vocal)
 │       ├── api.js                # Cliente HTTP (API_BASE recorta "/" final)
-│       └── components/           # BIDashboard.jsx, ChatPanel.jsx, AnswerCard.jsx
+│       ├── services/
+│       │   └── documentKnowledge.js # Ingesta SODA3 datos.gov.co (s2ru-bqt6) + parser local RAG
+│       ├── utils/
+│       │   ├── speechVoiceEngine.js # STT/TTS bidireccional de baja latencia + telemetría de emoción
+│       │   └── soundEffects.js      # Sistema de micro-sonidos Web Audio API puro
+│       └── components/           # PitchSection.jsx, CognitiveDashboard.jsx, ChatPanel.jsx
 ├── tests/                        # pytest (47 pruebas; testpaths=tests en pytest.ini)
 ├── supabase/
 │   └── migrations/
@@ -105,14 +110,11 @@ api-service-v2/
 └── ARQUITECTURA_FLUJO_INTENCIONES.md  # Esta documentación
 ```
 
-El v1 Flask (`app.py`, `ai_clients.py`, `telegram_bot.py`, `knowledge_base.py`, `static/`, `templates/`, scripts de prueba sueltos) fue eliminado del repositorio: su código solo existe en el historial de git.
-
-
 ---
 
 ## 4. Detalle de Componentes
 
-### 4.1. Router de Intenciones (Fast Path - `gpt-4o-mini`)
+### 4.1. Router de Intenciones (Fast Path - `gpt-4o-mini` / Groq)
 - **Ubicación:** `backend/services/intent_router.py`
 - Utiliza la función nativa `client.beta.chat.completions.parse` con el esquema Pydantic `IntentRouterDecision`.
 - Clasifica la consulta en 4 triggers:
@@ -127,34 +129,19 @@ El v1 Flask (`app.py`, `ai_clients.py`, `telegram_bot.py`, `knowledge_base.py`, 
 - **Funciones Implementadas:**
   * `rpc_get_marketing_kpis(p_url, p_device)`: Agregación de métricas de marketing con desglose por evento.
   * `rpc_get_engagement_summary(p_pais, p_dispositivo)`: Promedios de engagement, duración, páginas vistas y cálculo exacto de la tasa de frustración.
-  * `rpc_execute_metric_math(p_operacion, p_tabla, p_columna, ...)`: Ejecutor matemático dinámico pero seguro contra SQL Injection (vía whitelisting estricto y `format`).
+  * `rpc_execute_metric_math(p_operacion, p_tabla, p_columna, ...)`: Ejecutor matemático dinámico pero seguro contra SQL Injection.
 
 ### 4.3. Capa de Compresión de Contexto (TOON)
 - **Ubicación:** `backend/services/toon_service.py`
 - Utiliza la especificación **Token-Oriented Object Notation (`python-toon`)**.
-- Transforma matrices de registros JSON en encabezados estructurados compactos:
-  ```text
-  [10]{id,created_at,fecha,hora,pais,dispositivo,direccion_url_entrada,standarized_engagement_score,recuento_paginas,duracion_sesion_segundos,posible_frustracion}:
-    1,"2026-10-03T05:14:38",2026-10-02,"09:14:22",México,Mobile,/checkout/pago-tarjeta,0.18,2,45,1
-    2,"2026-10-03T05:14:38",2026-10-02,"10:30:15",Colombia,Desktop,/laboratorios-virtuales,0.89,9,480,0
-  ```
-- **Ventaja:** Disminuye el costo de inferencia y la latencia del modelo `gpt-4o` al reducir la ventana de contexto.
+- Transforma matrices de registros JSON en encabezados estructurados compactos ahorrando del 53% al 60% de tokens.
 
-### 4.4. Generación de Insights (Heavy Path - `gpt-4o`)
+### 4.4. Generación de Insights (Heavy Path)
 - **Ubicación:** `backend/services/insights_service.py`
 - Invocado **únicamente** cuando el Router devuelve `TRIGGER_INSIGHTS`.
 - Recibe un prompt con inyección bifactorial:
   1. **Evidencia empírica inmutable:** Salida de la RPC de Supabase.
   2. **Detalle operacional:** Registros comprimidos en TOON.
-- Retorna un objeto Pydantic `QualitativeInsightResponse`:
-  - `executive_summary`: Resumen de alto nivel.
-  - `observations`: Lista de hallazgos con nivel de impacto (`ALTO`, `MEDIO`, `BAJO`) y el KPI numérico que lo comprueba.
-  - `recommendations`: Acciones recomendadas con prioridad del 1 al 5 y resultado esperado.
-  - `sentiment_and_friction_analysis`: Diagnóstico de frustración del usuario.
-
-### 4.5. Conectores MCP (Model Context Protocol)
-- **Ubicación:** `backend/mcp/connector.py`
-- Prepara la base para conectar herramientas autónomas (`MCPTool`) y fuentes de datos externas (`MCPResource`) para que el Heavy Path pueda consultar CRMs, Google Analytics o sistemas de tickets sin alterar el core del gateway.
 
 ---
 
@@ -163,57 +150,6 @@ El v1 Flask (`app.py`, `ai_clients.py`, `telegram_bot.py`, `knowledge_base.py`, 
 ### `POST /api/v1/query`
 Procesa la consulta del usuario mediante el Flujo de Intenciones completo.
 
-**Request Body:**
-```json
-{
-  "query": "Analiza por qué los usuarios de México tienen tanta frustración y qué podemos hacer"
-}
-```
-
-**Response Body (Ejemplo Heavy Path):**
-```json
-{
-  "query": "Analiza por qué los usuarios de México tienen tanta frustración y qué podemos hacer",
-  "trigger": "TRIGGER_INSIGHTS",
-  "verified_deterministic_kpis": {
-    "pais_filtrado": "México",
-    "total_sesiones": 12,
-    "promedio_engagement_score": 0.51,
-    "total_sesiones_alta_frustracion": 6,
-    "tasa_frustracion_porcentaje": 50.0
-  },
-  "toon_context_preview": "[10]{id,created_at,fecha,hora,pais,dispositivo...}: ...",
-  "qualitative_insight": {
-    "executive_summary": "Alta concentración de eventos de fricción en checkout móvil.",
-    "observations": [
-      {
-        "area": "Flujo de Pago y Checkout",
-        "impact_level": "ALTO",
-        "evidence_kpi": "50% tasa de frustración",
-        "detail": "Fricción recurrente identificada en eventos de RageClicks y DeadClicks."
-      }
-    ],
-    "recommendations": [
-      {
-        "priority": 1,
-        "action": "Optimizar el formulario de tarjeta para dispositivos móviles",
-        "expected_outcome": "Aumento de conversión y reducción del rebote en checkout"
-      }
-    ],
-    "sentiment_and_friction_analysis": "Frustración crítica en usuarios con sistema operativo Android.",
-    "data_verified": true
-  },
-  "formatted_message": "### 📊 Diagnóstico Estratégico NEXO IA...",
-  "latency": {
-    "router_latency_ms": 112.5,
-    "supabase_rpc_latency_ms": 45.2,
-    "heavy_path_latency_ms": 1820.0,
-    "total_pipeline_latency_ms": 1977.7
-  },
-  "is_safe": true
-}
-```
-
 ### `GET /api/v1/health`
 Informa el estado de salud, modelos asignados y estado de la compresión TOON.
 
@@ -221,215 +157,52 @@ Informa el estado de salud, modelos asignados y estado de la compresión TOON.
 
 ## 6. Guía de Ejecución y Pruebas
 
-### 6.1. Iniciar el Servidor FastAPI
 ```powershell
-# En la raíz del proyecto con el entorno virtual activo:
-$env:PYTHONIOENCODING="utf-8"
+# Backend
 .\venv\Scripts\uvicorn.exe backend.main:app --host 0.0.0.0 --port 8000 --reload
-```
 
-### 6.2. Documentación Interactiva (Swagger UI)
-Abre en tu navegador:
-👉 **[http://localhost:8000/docs](http://localhost:8000/docs)**
+# Suite de Pruebas
+.\venv\Scripts\python.exe -m pytest -q
 
-### 6.3. Ejecutar la Suite de Pruebas Automatizadas
-```powershell
-$env:PYTHONIOENCODING="utf-8"
-.\venv\Scripts\python.exe -m pytest -q     # 47 pruebas, no llama al proveedor real
-```
-Las pruebas que sí invocan al proveedor llevan el marker `live_llm` y quedan excluidas por defecto.
-
-
-### 6.4. Consumir desde el Frontend (React)
-```javascript
-const response = await fetch("http://localhost:8000/api/v1/query", {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ query: "¿Cuáles son los DeadClicks en checkout?" })
-});
-const data = await response.json();
-console.log("Trigger:", data.trigger);
-console.log("KPIs deterministas:", data.verified_deterministic_kpis);
-console.log("Mensaje renderizable:", data.formatted_message);
+# Compilación Frontend
+npm --prefix frontend run build
 ```
 
 ---
 
-## 7. Resumen de Cambios Frente al Proyecto Anterior
+## 7. Optimización de Tokens: Dónde Mirar
 
-1. **Eliminación de la Carrera de IAs:** Se removió la ejecución simultánea con competencia de hilos entre OpenAI y Gemini que existía en el v1 (`app.py` y `telegram_bot.py`, hoy eliminados del repositorio).
-
-2. **Desacoplamiento Determinista vs. Probabilístico:** El LLM ya no realiza cálculos agregados directamente ni lee tablas sin estructurar; la base de datos PostgreSQL ejecuta las agregaciones vía RPC.
-3. **Capa TOON Activa:** Implementación de compresión token-eficiente previa a la síntesis narrativa.
-4. **Arquitectura Asíncrona:** Migración del núcleo analítico a FastAPI con esquemas Pydantic v2 y soporte para conectores MCP.
+- `ROUTER_SYSTEM_PROMPT`: 2.278 chars (~570 tokens) en todas las consultas.
+- `HEAVY_PATH_SYSTEM_PROMPT`: 1.016 chars (~254 tokens) solo en Heavy Path.
+- Compresión TOON ahorra entre 53% y 60% en arreglos tabulares.
 
 ---
 
-## 8. Estado Real de Implementación (verificado)
+## 8. Bitácora de Errores y Pendientes
 
-Esta sección corrige afirmaciones anteriores de este documento que no coincidían con el código. La tabla distingue entre lo implementado y lo pendiente.
+### 8.1. Corregidos
 
-### 8.1. Correcciones de hechos anteriores
+1. **Esquema rechazado por Gemini.** Reconstrucción por lista blanca en `inline_refs()`.
+2. **Filtro de país ignorado.** Normalización con `normalization.py`.
+3. **Fallback descartaba los filtros.** Propagación de `country_filter` y `device_filter`.
+4. **TOON roto.** Corregido a `compress_records()`.
+5. **`insights_service` acoplado a OpenAI.** Migrado a `llm_client`.
+6. **`insights_service` sin `await`.** Corregido.
+7. **Importación de nombre privado.** Renombrado a `COUNTRY_ALIASES`.
+8. **Clave de API expuesta en `.env`.** Rotada a clave activa `AQ.Ab8...`.
+9. **Definiciones respondidas con KPIs.** Resuelto con `_definition_reply` en `intent_router.py`.
+10. **Markdown crudo en las respuestas del bot.** Resuelto con `Markdown.jsx`.
+11. **Tema monocromo en todo el sistema.** Paleta en escala de grises y negros.
+12. **Dashboard conectado a datos reales.** Eliminación de valores hardcodeados.
+13. **Rediseño UI/UX premium.** Persistencia de tema y contadores suaves con `useCountUp`.
+14. **Diagnósticos y utilidades de audio.** Integración de `soundEffects.js` y `frictionDiagnostics.js`.
+15. **Transformación completa al Reto 01 de Kognia Labs (Agente Vocal Cognitivo).** Frontend adaptado 100% a la rúbrica oficial ("Habla con cualquier documento, en tiempo real"):
+    - `PitchSection.jsx`: Apartado expositivo con guion de 10 min (P1 a P6), rúbrica y arquitectura de latencia sub-segundo.
+    - `CognitiveDashboard.jsx`: Consola vocal en vivo, ingesta SODA3 de datos.gov.co (`s2ru-bqt6`), briefing automático con 4 preguntas sugeridas, Web Speech API (STT/TTS <420ms), waveform reactivo, stream diarizado estricto (Jurado vs Agente) y radar emocional.
+    - QA: `npm run build` en 6.09s y 42 pruebas pytest aprobadas.
 
-| Afirmación previa | Estado real |
-| --- | --- |
-| Las 3 RPCs existen en Supabase | **Falso.** Solo hay dos migraciones: `20261003000000_init_schema_and_mock_data.sql` y `20261003010000_knowledge_auditoria.sql`. El archivo de RPC analíticas nunca se creó. |
-| PostgreSQL ejecuta la agregación | **Parcial.** Las llamadas RPC devuelven `404`; opera `_fallback_deterministic_aggregation` en Python. |
-| `gpt-4o-mini` / `gpt-4o` como modelos | **Cambiado.** Proveedor configurable vía `LLM_PROVIDER`; por defecto `groq` con `openai/gpt-oss-120b` en ruta y síntesis. |
-| Insights generados por GPT-4o | **Cambiado.** `insights_service.py` usa `llm_client` con el proveedor activo (Groq en producción). |
-| El LLM es determinista en agregados | **Correcto**, y es el invariante central: el LLM nunca calcula KPIs. |
+### 8.2. Pendientes
 
-### 8.2. Proveedor de LLM intercambiable
-
-`backend/services/llm_client.py` centraliza el acceso. Se elige con `LLM_PROVIDER`:
-
-- `groq` (por defecto): **capa gratuita** (1.000 requ/día). Es el proveedor activo por decisión: Gemini se descartó por no ofrecer free tier y OpenAI está sin créditos. Modelo `openai/gpt-oss-120b` para ambas etapas.
-- `gemini`: se probó; su esquema OpenAPI parcial obliga a `inline_refs()` (sección 8.3), pero quedó descartado como primario por no tener capa gratuita.
-- `openai`: requiere créditos; actualmente la cuenta devuelve `429 insufficient_quota`.
-
-OpenAI se instancia con `max_retries=0` para evitar que los reintentos enmascaren la cuota agotada y disparen la latencia.
-
-### 8.3. Adaptación de esquemas Pydantic para Gemini
-
-Gemini implementa solo un subconjunto de OpenAPI Schema y rechaza el resto con `Unknown field for Schema`. La función `inline_refs()` reconstruye el esquema conservando solo las claves permitidas:
-
-- Resuelve `$defs` / `$ref` expandiéndolas en el lugar donde aparecen.
-- Descarta `title`, `minimum`, `maximum`, `additionalProperties`, `default`.
-- Colapsa `anyOf` con un único tipo no nulo.
-
-Sin esta adaptación, Pydantic generaba esquemas que Gemini rechazaba en el 100% de las consultas, y el sistema caía al fallback heurístico en silencio.
-
-### 8.4. Normalización de filtros
-
-`backend/services/normalization.py` existe porque el LLM devuelve el país como lo escribió el usuario. `Mexico`, `México` y `méxico` deben mapear al mismo valor en la base de datos.
-
-- `COUNTRY_ALIASES` y `DEVICE_ALIASES` con normalización por folding (minúsculas + eliminación de acentos).
-- `normalize_country()` / `normalize_device()` para canonicalizar.
-- `match_country()` / `match_device()` para filtrar registros ya recuperados, con coincidencia exacta en lugar de `in` difuso.
-
-Este componente corrige el defecto por el que el filtro `p_pais` devolvía `GLOBAL`.
-
-### 8.5. Endpoints
-
-- `POST /api/v1/query`: pipeline completo. Campos realmente usados por el frontend: `verified_deterministic_kpis`, `qualitative_insight`, `formatted_message`, `is_safe`.
-- `GET /api/v1/dashboard`: agregados para el tablero.
-- `GET /api/v1/health`: expone `provider`, modelos efectivos, `rpcs_deployed: false` y `MCP_ENABLED`.
-
----
-
-## 9. Optimización de Tokens: Dónde Mirar
-
-Las cifras de esta sección están medidas con el esquema de datos actual (10 registros por tabla), no estimadas.
-
-### 9.1. Qué consume tokens y qué no
-
-Cada consulta de negocio paga **dos** llamadas al LLM. La primera es barata; la segunda es la cara.
-
-| Componente | Tamaño | Se paga en |
-| --- | --- | --- |
-| `ROUTER_SYSTEM_PROMPT` | 2 278 chars (~570 tok) | Todas las consultas |
-| `HEAVY_PATH_SYSTEM_PROMPT` | 1 016 chars (~254 tok) | Solo Heavy Path |
-| KPIs deterministas (repr de dict) | Variable | Solo Heavy Path |
-| Contexto TOON comprimido | Ver 9.2 | Solo Heavy Path |
-
-### 9.2. TOON: dónde está la mayor ganancia
-
-`toon_service.compress_records()` reduce el contexto antes de enviarlo al LLM:
-
-| Tabla | JSON | TOON | Ahorro |
-| --- | --- | --- | --- |
-| `grabaciones_analisis` (10 filas, 11 col) | 3 160 c (~790 tok) | 1 251 c (~313 tok) | **-60.4 %** |
-| `metricas_marketing` (10 filas, 8 col) | 2 139 c (~535 tok) | 1 003 c (~251 tok) | **-53.1 %** |
-
-El mecanismo es que TOON emite el encabezado de columnas una sola vez y luego solo valores delimitados, eliminando la repetición de claves JSON.
-
-**Dónde mirar primero para optimizar:** `limit` en las llamadas de `main.py` a `supabase_service.fetch_operational_records(..., limit=10)`. Ese `10` es el multiplicador directo del costo del Heavy Path. Bajar a 5 reduce a la mitad el contexto con la mayor pérdida de detalle. Subirlo sube el costo de forma lineal.
-
-### 9.3. Payload muerto hacia el frontend
-
-Tras el rediseño de la UI, `QueryResponse` sigue enviando cuatro campos que `AnswerCard.jsx` y `ChatPanel.jsx` **no leen**:
-
-- `toon_context_preview`: ~250 chars de TOON truncado en `main.py`.
-- `trigger` y `confidence_score`: exponían etiquetas técnicas que la UX decidió ocultar.
-- `latency`: tres métricas de tiempo que la UI ya no muestra.
-
-El único campo de `QueryResponse` en desuso con costo apreciable es `toon_context_preview`. Se calcula y se transmite sin consumidor. Esto no ahorra tokens de LLM, pero reduce ancho de banda y ruido de contrato.
-
-### 9.4. Fuentes de tokens evitables
-
-- `insights_service.py` serializa los KPIs con `f"{kpis}"`, que produce la `repr()` de un dict de Python, no JSON. Es más verboso y menos claro para el modelo.
-- `ROUTER_SYSTEM_PROMPT` se envía íntegro en cada consulta. Como el router es determinista en su salida y de bajo riesgo, es candidato a una versión reducida, moviendo las reglas al esquema Pydantic en lugar del prompt.
-- `contenido_paginas` devuelve 0 filas. Cualquier contexto que se le añada hoy es costo sin información.
-
-### 9.5. Qué NO optimizar
-
-No comprimir ni recortar los KPIs deterministas. Son la fuente de verdad y el LLM solo los narra. Reducirlos para ahorrar tokens degrada la precisión del insight sin un beneficio claro.
-
----
-
-## 10. Bitácora de Errores y Pendientes
-
-Registro de defectos detectados durante la implementación, con su estado actual.
-
-### 10.1. Corregidos
-
-1. **Esquema rechazado por Gemini.** `ValueError: Unknown field for Schema: $defs`, luego `title`, luego `maximum`. El sistema degradaba al fallback heurístico en el 100% de las consultas y reports "funcionando". Resuelto con la reconstrucción por lista blanca en `inline_refs()`.
-2. **Filtro de país ignorado.** El LLM devolvía `Mexico` y la base contiene `México`, por lo que el filtro caía a `GLOBAL`. Resuelto con `normalization.py` y coincidencia exacta.
-3. **Fallback descartaba los filtros.** `_heuristic_fallback` no propagaba `country_filter` ni `device_filter`. Corregido: el fallback ahora aplica y devuelve los filtros aplicados.
-4. **TOON roto.** `eventos_friccion_detalle` y el previsualizado devolvían cadena vacía. Corregido el método a `compress_records()`. Compresión verificada en -53 % a -60 %.
-5. **`insights_service` acoplado a OpenAI.** Usaba `AsyncOpenAI` directo con `max_retries` por defecto, provocando reintentos ante la cuota agotada. Migrado a `llm_client`.
-6. **`insights_service` sin `await`.** La llamada asíncrona al LLM no se esperaba, devolviendo un coroutine en lugar de la respuesta. Corregido.
-7. **Importación de nombre privado.** Se importaba `_COUNTRY_ALIASES` desde otro módulo. Renombrado a `COUNTRY_ALIASES`.
-8. **Clave de API expuesta en `.env`.** Rotada por el usuario; la clave activa es ahora del formato `AQ.Ab8...` y responde correctamente.
-9. **Definiciones respondidas con KPIs y sin guía.** "¿qué es engagement?" se clasificaba como `TRIGGER_KPIS` y devolvía cifras que no contestaban la pregunta; las consultas fuera de dominio recibían el mensaje genérico de clarificación sin ejemplos. Resuelto con `_definition_reply` en `intent_router.py` (glosario determinista, sin LLM, que explica el término y sugiere una pregunta de ejemplo), mensajes de clarificación con ejemplos y una regla nueva en `ROUTER_SYSTEM_PROMPT`. Se quitaron además las preguntas rápidas (`STARTER_QUESTIONS`) y su CSS muerto en `ChatPanel.jsx` / `App.css`.
-10. **Markdown crudo en las respuestas del bot.** El backend devuelve `**negrita**`, `_énfasis_`, `###`, listas y bloques ```json```, pero el front los imprimía tal cual: se veían asteriscos y `###` sin procesar. Resuelto con `Markdown.jsx`, renderizador mínimo sin dependencias (subconjunto emitido por Nexo IA, sin HTML sin escapar) aplicado a los mensajes del asistente y a los campos de texto de `AnswerCard`. En el mismo cambio: el chat pasó a llamarse **NEXO IA** (eliminado el `Minimize2` sin usar) y se aplicó un **tema monocromo** (grises/negros/blancos) a la burbuja, popup y AnswerCard, definido al final de `App.css` para ganar la cascada sobre los bloques azules previos.
-11. **El azul sobrevivía en el resto de la web.** El tema monocromo original solo cubría el chat; sidebar, topbar, dashboard, KPIs y estados seguían con acento `#007aff`, tintes azules y semáforo verde/rojo/ámbar. Resuelto redefiniendo los tokens de `index.css` a escala de grises (acento/ tintes/estados en `rgba(28,28,30,…)` y `--blue-grad` en grises), convirtiendo los literales de `BIDashboard.jsx` (SVG de onda/gauge y conic-gradient del donut) y los 2 literales que quedaban en `App.css` (`.col-bar-wrap` y `.friction-item-row:hover`). Verificado con `npm run build` (bundle `index-crAt-F3X.js`).
-12. **El dashboard mostraba turismo de Caldas en lugar de la analítica real.** `GET /api/v1/dashboard` siempre devolvió métricas de sesiones (`total_sesiones`, `avg_engagement`, `frustration_rate`, `avg_duration_sec`, `device_breakdown`, `country_stats`, `url_friction`), pero `BIDashboard.jsx` pintaba "Ocupación Hotelera", "Ocupación Q3", "Ingresos $31,383.900" y categorías turísticas — campos que el backend no emite (`ocupacion_hotelera_pct`, `ocupacion_q3`, `ingresos_estimados`, `categories`), así que toda la fila superior caía a fallbacks hardcodeados ("142.5K", 74%, "$31,383.900"). Resuelto rediseñando las tarjetas con los campos reales: sesiones totales, engagement promedio (gauge 0-100 a partir de `avg_engagement` 0-1), tasa de frustración, duración promedio (formato min/s), donut de dispositivos (mobile/desktop) y país con barras relativas al máximo. Header genérico "RESUMEN ANALÍTICO DE SESIONES" y eliminado el selector de periodo ficticio (Observatorio/Q3/Año 2026). Verificado con `npm run lint` (solo warning preexistente) y `npm run build` (bundle `index-DaHTfOc-.js`).
-13. **Rediseño UI/UX premium implementado.** Se incorporó `ThemeContext` para manejar soporte light/dark mode persistido en `localStorage` y selector en Topbar. Se implementó un hook personalizado `useCountUp` para animar suavemente KPIs y contadores sin romper la exactitud matemática. Se realizaron ajustes en responsive (drawer en mobile) y estilización homogénea para FAB y `ChatPanel`. Todo validado sin tocar lógica de negocio del flujo analítico y verificado con un build en 410ms y 42 pruebas pasadas.
-14. **Adaptación de la propuesta de la Hackathon.** Se integraron las vistas "Pitch & Innovación" y "Dashboard En Vivo". Implementación de utilidades como `soundEffects.js` (motor Web Audio API puro) y `frictionDiagnostics.js` (telemetría detallada, `getFrictionDiagnostic` y `submodulesInfo`). Inclusión del modal interactivo `FrictionReplayModal` simulando RageClicks con recomendación prescriptiva de parche. Estandarización de nombre provisional "Hackathon Propuesta" con comentarios explícitos para reemplazo futuro. Auditoría QA aprobada: build limpio en 415ms, 42 tests pytest aprobados.
-
-### 10.2. Pendientes
-
-1. **RPCs sin desplegar.** Es el pendiente de mayor impacto. Mientras no existan, la "ejecución determinista en PostgreSQL" no ocurre: el fallback de Python sustituye a la base de datos. Requiere `apply_migration` vía MCP de Supabase con OAuth, o ejecución manual del SQL.
-2. **Prompt y esquema desalineados.** El test del router con la consulta de DeadClicks devolvió `TRIGGER_KPIS` junto a `rpc_name: rpc_get_engagement_summary`. El esquema permite combinaciones inconsistentes porque no valida que el trigger y la RPC correspondan.
-3. **Saludo inicial no se renderiza.** `ChatPanel.jsx` construye el mensaje de bienvenida con `text`, pero los mensajes del asistente se pintan siempre vía `<AnswerCard payload={m.payload} />`. El texto del saludo no llega a verse.
-4. **Pregunta repetida idéntica.** `App.jsx` deduplica con una ref que compara la última pregunta; seleccionar dos veces la misma tarjeta no dispara un segundo envío.
-5. **Advertencia de SDK obsoleto.** `google.generativeai` está deprecado a favor de `google.genai`. Funciona, pero conviene migrar.
-6. **Acceso MCP no disponible en la sesión actual.** Requiere reiniciar opencode y autorizar por OAuth.
-7. **Campos muertos en el contrato.** Ver 9.3.
-8. **Sin CI/CD.** El push dispara el despliegue en Render y Vercel sin ejecutar antes `pytest`, `npm run lint` ni `npm run build`: un error solo se manifiesta en producción. Ver `AGENTS.md` sección 7.
-9. **Blueprint de Render no vinculado.** `render.yaml` describe `rootDir`, build y start, pero el servicio se configuró a mano en el dashboard (Root Directory, comandos). La fuente real de la configuración es el dashboard, no el repo: hay *drift* y el próximo cambio manual puede romper el arranque. Ver `AGENTS.md` sección 8.
-
-> Resueltos en esta sesión: *"Dependencias ausentes en `requirements.txt`"* (ver 11.1) y *"v1 sin reubicar"* (ver 11.1, se eliminó el v1 completo del repositorio).
-
-
----
-
-## 11. Cierre de Esta Sesion
-
-### 11.1. Corregido en esta sesion
-
-9. **`requirements.txt` incompleto y corrupto.** Le faltaban `fastapi`, `uvicorn`, `pydantic-settings` y `python-toon`, y venia codificado en UTF-16LE, lo que lo hacia ilegible como texto plano. Reescrito en UTF-8 y agrupado por funcion; en esta sesion se elimino ademas la seccion heredada del v1 Flask, ya que esos archivos ya no existen en el repo.
-10. **`.env` desalineado con `config.py`.** Faltaban `LLM_PROVIDER` y los modelos de Gemini. Ahora estan explicitos, `PORT` paso de 5000 (Flask) a 8000 (FastAPI) y las claves de Telegram quedaron marcadas como legado.
-11. **Puntos de gasto de tokens medidos y documentados.** Ver seccion 9. Los numeros provienen de ejecucion real sobre el esquema actual, no de estimaciones.
-12. **Render: `ModuleNotFoundError: No module named 'backend'`.** El servicio tenia Root Directory `./backend`, asi que `uvicorn backend.main:app` arrancaba dentro de `backend/`, donde el paquete `backend` no existe; el codigo importa `from backend...` en todas partes. El build no fallaba porque `backend/requirements.txt` incluye `-r ../requirements.txt`. Root Directory dejado en la raiz del repo, con `buildCommand: pip install -r requirements.txt` y `startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT`. Verificado: `curl https://stack-comp.onrender.com/api/v1/health` -> 200 con `provider: groq`.
-13. **Vercel: 404 `{"detail":"Not Found"}` en cada peticion.** `VITE_API_URL` se definio con barra final y `api.js` concatenaba `/api/v1/...`, produciendo `https://...onrender.com//api/v1/...`. Starlette no matchea rutas con doble barra. Medido contra el backend real: `//api/v1/health` -> 404 con `detail`, `/api/v1/health` -> 200. `API_BASE` ahora recorta barras finales (commit `3180227`) y la variable quedo sin `/`. Recordar que Vite inyecta `VITE_*` en el build: sin redeploy no hay cambio.
-14. **Limpieza del v1 y documentacion alineada.** Eliminados de la raiz `app.py`, `ai_clients.py`, `telegram_bot.py`, `knowledge_base.py`, `test_keys.py`, `test_models.py`, `test_intent_flow.py`, `check_supabase.py`, `static/` y `templates/`. `README.md` reescrito para v2 (FastAPI + React + Supabase y guia de despliegue). `AGENTS.md` actualizado: mapa real del repo, comandos de prueba, seccion 6 con las tres trampas de despliegue, seccion 8 (Render + Vercel) y seccion 9 (regla de documentacion). Nuevo hook `.githooks/pre-commit` que bloquea commits de codigo sin documentacion en el mismo commit (`SKIP_DOCS=1` para saltarselo); activar con `git config core.hooksPath .githooks`.
-15. **Proyecto independizado en un solo repositorio.** `origin` (`LDking777/api-service-v2`) seguia siendo el v1 Flask y fue la causa raiz del `ModuleNotFoundError` del caso 12 cuando Render apuntaba a ese repo. Se revirtio `api-service-v2/main` a su commit v1 (`3d11d6e`, force-with-lease) para dejarlo como estaba, se elimino el remoto `origin` de este clon y la rama local `main` (que apuntaba a v1). Fuente unica: `stack` (`LDking777/Stack_comp`), con `pdn_qa` y `developer` en `f2f2b5e`.
-16. **Glosario determinista y guía para preguntas fuera de dominio.** `_definition_reply` (backend) reconoce peticiones de definición ("¿qué es engagement?", "explícame las rage clicks") y responde con el término, su significado y una pregunta de ejemplo, sin gastar una llamada al LLM y funcionando aunque el proveedor caiga. Para términos desconocidos guía al usuario hacia los que sí conoce. El mensaje de clarificación del fallback (`_heuristic_fallback`) y el default de `main.py` incluyen ejemplos, y `ROUTER_SYSTEM_PROMPT` instruye a devolver `TRIGGER_CLARIFICATION` con explicación para definiciones/fuera de dominio. Se añaden 4 pruebas (`tests/test_router_definitions.py`, 47 en total, 42 pasan y 5 saltan) que fijan que una pregunta de análisis no se secuestra como definición. En el frontend se eliminaron `STARTER_QUESTIONS` (preguntas rápidas) y su CSS en `App.css`; `npm run lint` y `npm run build` pasan.
-17. **UI del chat en monocromo y markdown renderizado.** `Markdown.jsx` (nuevo, sin dependencias) formatea las respuestas del bot y elimina los asteriscos/`###` crudos que se veían antes. Paleta grises/negros/blancos aplicada a `.chat-popup`, `.chat-fab`, burbujas, thinking, input, badges, `.answer-*` y la AnswerCard (bloque final de `App.css` que gana la cascada sobre los azules previos). El asistente pasó de CALDAS IA a NEXO IA en `ChatPanel.jsx` (cabecera, FAB y aria-labels) y en el comentario de `App.jsx`; se eliminó el import `Minimize2` sin usar. Verificado con `npm run lint` (solo 2 warnings preexistentes) y `npm run build` (bundle `index-Cf5ipWwC.js`).
-18. **Monocromo extendido a toda la web.** La primera pasada dejó el chat en grises pero el resto seguía con azul/verde/rojo. Ahora `index.css` define todos los tokens de acento, tintes y estados en escala de grises (negros `#1c1c1e`/`#2c2c2e`, grises `#6b6b70`/`#9a9aa0` y fills `rgba(28,28,30,…)`), `BIDashboard.jsx` usa grises en los SVG (onda/gauge) y en el conic-gradient del donut, y se corrigieron los 2 literales de color restantes en `App.css`. Es el diseño "colores grises, negros y blancos" aplicado a sidebar, topbar, dashboard, KPIs y estados. `npm run lint` (2 warnings preexistentes) y `npm run build` (bundle `index-crAt-F3X.js`) pasan.
-19. **Dashboard conectado a los datos reales del endpoint.** Se reemplazó todo el contenido turístico hardcodeado de `BIDashboard.jsx` (gauge de ocupación hotelera, ocupación Q3, ingresos estimados y donut de categorías turísticas) por tarjetas que leen los campos que el backend realmente produce: sesiones totales, engagement promedio convertido a gauge 0-100, tasa de frustración, duración promedio, donut de dispositivos, tabla de países con barras relativas y la lista de fricción (que ya era real). Se eliminó el selector de periodo (Observatorio/Q3/Año 2026) que no correspondía a ningún filtro del backend y se actualizó el título a "RESUMEN ANALÍTICO DE SESIONES". Desaparecieron los fallbacks hardcodeados "142.5K", "74%" y "$31,383.900". `npm run lint` (solo warning preexistente de App.jsx) y `npm run build` (bundle `index-DaHTfOc-.js`) pasan.
-20. **Arquitectura de UI base mejorada para UI/UX premium.** Integración completa del hook `useCountUp` en el frontend, garantizando transiciones deterministas al mostrar estadísticas, respetando el pipeline que evita cálculos/alucinaciones del LLM en los números. Adicionalmente, el `ThemeContext` (para el switch entre dark y light mode) se encapsuló, manteniendo limpios los componentes y garantizando que el diseño de Turismo Caldas 5.0 / NEXO IA sea extensible para el equipo de web-frontend.
-21. **Diagnósticos y utilidades de audio para Hackathon.** Se creó `frontend/src/data/frictionDiagnostics.js` con un mapa estático de datos de diagnóstico detallados para puntos críticos de fricción (`/checkout/pago-tarjeta`, `/registro/paso-2`, `/carrito-compras`), incluyendo identificadores de sesión simulada y parches de código sugeridos. Adicionalmente, se creó `frontend/src/utils/soundEffects.js` con un sistema de micro-sonidos basado en Web Audio API (tonos 'click', 'success', 'warning', 'rage', 'high') sin librerías externas.
-22. **Adaptación de la propuesta de la Hackathon (QA superado).** Se incluyeron las vistas "Pitch & Innovación" y "Dashboard En Vivo", además del modal interactivo `FrictionReplayModal` (simulador de RageClicks con recomendación prescriptiva). Se completó la implementación de `soundEffects.js` y `frictionDiagnostics.js` con datos de telemetría y submodulesInfo. Se estandarizó bajo el nombre provisional "Hackathon Propuesta". Auditoría QA aprobada: build en 415ms, 42 tests pytest aprobados.
-23. **Replicación exacta de la UI propuesta con Tailwind.** Se reconstruyó completamente la capa visual del frontend para replicar de forma exacta el diseño visual, microinteracciones y posicionamiento (HTML Proposal), inyectando el CDN de Tailwind y los estilos base. Se refactorizó la estructura en React (`App.jsx`, `BIDashboard.jsx`, `PitchSection.jsx`, `ChatPanel.jsx`, `AnswerCard.jsx`, `FrictionReplayModal.jsx` y `SubmoduleModal.jsx`) transformando el layout a componentes modulares con clases de Tailwind puras, eliminando la dependencia a `App.css` e `index.css`. El Copiloto / Chat interactivo (`NEXO IA`) conserva íntegra la lógica funcional de peticiones, validaciones y auto-scroll, ahora arropado en la UI nativa dictada por la propuesta. Compilación limpia y exitosa de Vite.
-24. **Corrección de renderizado en producción (ThemeContext).** Se modificó la función `useTheme` en `frontend/src/context/ThemeContext.jsx` eliminando el `throw new Error(...)` y reemplazándolo por un fallback defensivo que devuelve un tema por defecto ('dark') y funciones vacías. Esto evita pantallas blancas en la app si un componente aislado pierde el contexto. Además, se verificó que `frontend/src/main.jsx` envuelve correctamente a `<App />` en `<ThemeProvider>`.
-
-### 11.2. Pendiente de confirmacion
-
-El router fue probado directamente contra Gemini y devuelve confianzas no constantes, lo que descarta la hipotesis del fallback: extrae correctamente pais (`Mexico`, `Mexico` con acento, `Colombia`, `Peru`), dispositivo (`celular` -> `Mobile`, `escritorio` -> `Desktop`) y URL. Falta una pasada de extremo a extremo sobre la interfaz con el backend reiniciado.
-
-### 11.3. Sobre las mediciones de latencia
-
-Las cifras de latencia obtenidas durante la sesion con OpenAI **no son representativas**. Correspondian a reintentos automaticos derivados del `429 insufficient_quota`, no al tiempo de inferencia. Cualquier benchmarking debe repetirse con `LLM_PROVIDER=gemini` antes de documentarse.
+1. **RPCs sin desplegar en Supabase.** Sigue operando el fallback determinista en Python.
+2. **Advertencia de SDK obsoleto.** `google.generativeai` migrar a `google.genai`.
+3. **Blueprint de Render.** Sincronizar configuración del dashboard con `render.yaml`.

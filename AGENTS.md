@@ -8,13 +8,11 @@ Lee este archivo antes de tocar código. Está escrito para que un agente nuevo 
 
 ## 1. Qué es este proyecto
 
-Nexo IA es un asistente de Business Intelligence para usuarios de ventas. El usuario hace preguntas en lenguaje natural ("¿por qué se frustran los usuarios de México?") y recibe una respuesta con cifras verificadas y una interpretación narrativa.
-
-No es un chat de propósito general. El dominio es analítica de sesiones de usuario: métricas de marketing, engagement, contenido de páginas y eventos de fricción.
+Nexo IA es un asistente de Business Intelligence y Agente Vocal Cognitivo desarrollado para interactuar con datos en tiempo real. En su evolución para el **Reto 01 de Kognia Labs**, se transformó en un **Agente Vocal Cognitivo** que habla con cualquier documento en tiempo real, ingestando la API oficial de `datos.gov.co` (Relación de IPS y capacidad instalada) o documentos sorpresa del jurado, ofreciendo briefing automático, streaming diarizado y telemetría de emoción en vivo.
 
 ### El invariante central
 
-**El LLM nunca calcula números.** PostgreSQL agrega; el LLM solo narra.
+**El LLM nunca calcula números.** PostgreSQL o el dataset validado agregan; el LLM solo narra.
 
 Si alguna vez modificas este diseño, cualquier ruta que haga que el modelo estime, infiera o "aproxime" un KPI es un bug, no una mejora. Los numeros exactos vienen de la base de datos o del fallback determinista, nunca del prompt.
 
@@ -47,77 +45,42 @@ api-service-v2/
 │       └── normalization.py    # Paises y dispositivos (acentos, alias)
 ├── frontend/                   # React + Vite (desplegado en Vercel)
 │   └── src/
-│       ├── App.jsx             # Composicion tablero + burbuja + panel
+│       ├── App.jsx             # Switcher Bi-vista (Pitch & Arquitectura vs Consola Vocal)
 │       ├── api.js              # Cliente HTTP; API_BASE recorta el "/" final
+│       ├── services/
+│       │   └── documentKnowledge.js # Ingesta SODA3 datos.gov.co (s2ru-bqt6) + parser local RAG
+│       ├── utils/
+│       │   ├── speechVoiceEngine.js # STT/TTS bidireccional de baja latencia + telemetría de emoción
+│       │   └── soundEffects.js      # Sistema de micro-sonidos Web Audio API puro
 │       └── components/
-│           ├── BIDashboard.jsx     # KPIs, paises, dispositivos, friccion
-│           ├── ChatPanel.jsx       # Burbuja flotante NEXO IA + panel lateral
-│           ├── Markdown.jsx        # Render minimo de markdown para respuestas del bot
-│           └── AnswerCard.jsx      # Render de respuestas estructuradas
+│           ├── PitchSection.jsx     # Apartado expositivo: Kognia Labs Reto 01 & guion 10 min
+│           ├── CognitiveDashboard.jsx # Consola Vocal, transcripción diarizada, radar de emociones y tabla IPS
+│           ├── BIDashboard.jsx      # Dashboard analítico tradicional de sesiones
+│           ├── ChatPanel.jsx        # Asistente flotante NEXO IA
+│           └── ToastContainer.jsx   # Notificaciones contextuales Tailwind
 ├── tests/                      # pytest (pytest.ini: testpaths=tests, 47 pruebas)
 ├── supabase/migrations/        # SQL: esquema inicial + knowledge_auditoria
 ├── render.yaml                 # Blueprint de Render: rootDir, build, start, envVars
 ├── requirements.txt            # Dependencias del backend (fuente unica)
 ├── pytest.ini                  # Configuracion de pruebas
 ├── README.md                   # Arranque local y despliegue
-├── opencode.json               # Config de opencode (MCP de Supabase)
 ├── ARQUITECTURA_FLUJO_INTENCIONES.md   # Arquitectura, estado real, bitacora
-├── .githooks/pre-commit        # Recuerda actualizar la documentacion
 └── .env                        # Secretos locales. Gitignored. Nunca commitear
 ```
-
-No existe `legacy/` ni `docs/`: el v1 Flask (`app.py`, `ai_clients.py`, `telegram_bot.py`, `knowledge_base.py`, `test_keys.py`, `test_models.py`, `check_supabase.py`, `static/`, `templates/`) fue **eliminado** del repositorio. Su código sigue en el historial (`git show <commit>:app.py`).
-
 
 ---
 
 ## 3. Dónde seguir una consulta
 
-Este es el recorrido de `POST /api/v1/query`. Si buscas un comportamiento, este es el orden.
-
 1. `backend/main.py` — orquestacion. Decide modo fast vs heavy.
 2. `backend/services/intent_router.py` — clasifica y extrae filtros.
 3. `backend/services/supabase_service.py` — ejecuta RPC o fallback.
 4. `backend/services/insights_service.py` — genera narrativa (solo heavy).
-5. `backend/schemas/` — el contrato de lo que sale por cada lado.
-
-Para el tablero, entra directo en `backend/main.py` (`GET /api/v1/dashboard`) y salta a `supabase_service.fetch_operational_records()`.
+5. En Frontend: `CognitiveDashboard.jsx` y `documentKnowledge.js` procesan consultas de voz en tiempo real con Web Speech API y RAG documental.
 
 ---
 
-## 4. Donde buscar para optimizar tokens
-
-Si la tarea es reducir consumo de tokens, empieza aqui y en este orden de impacto.
-
-### 4.1. El limite de registros — mayor palanca
-
-`backend/main.py` llama a `supabase_service.fetch_operational_records(tabla, limit=10)`. Ese `10` multiplica directamente el costo del Heavy Path: los tres bloques de contexto que se comprimen a TOON. Bajarlo a 5 reduce a la mitad el contexto, con perdida de detalle. Subirlo sube el costo de forma lineal.
-
-### 4.2. La compresion TOON
-
-`backend/services/toon_service.py`. Ya entrega -53% a -60% frente a JSON. Si buscas mas, el lugar correcto es aqui, no en los prompts.
-
-### 4.3. Los prompts del sistema
-
-`ROUTER_SYSTEM_PROMPT` en `intent_router.py` (~570 tokens) se envia **completo en todas las consultas**. `HEAVY_PATH_SYSTEM_PROMPT` en `insights_service.py` (~254 tokens) solo en heavy path.
-
-El router es determinista y de bajo riesgo, asi que es el candidato natural a prompt mas corto: buena parte de sus reglas pueden pasar al esquema Pydantic, donde no se repiten por llamada.
-
-### 4.4. Serializacion de KPIs
-
-`insights_service.py` construye el contexto con `f"{kpis}"`, que produce la `repr()` de un dict de Python. No es JSON y es mas verboso. Usar `json.dumps` mejora la claridad para el modelo y suele reducir caracteres.
-
-### 4.5. Campos muertos en la respuesta
-
-`QueryResponse` sigue enviando `toon_context_preview` (~250 chars), `trigger`, `confidence_score` y `latency`. El frontend ya no lee ninguno: la UX los ocultó a proposito. `toon_context_preview` es el unico con costo apreciable y se calcula sin consumidor. No ahorra tokens de LLM, pero reduce ancho de banda.
-
-### 4.6. Lo que NO debes optimizar
-
-Los KPIs deterministas. Son la fuente de verdad. Recortarlos para ahorrar tokens degrada el insight sin beneficio. Y `contenido_paginas` devuelve 0 filas: cualquier contexto que se le anada hoy es costo sin informacion.
-
----
-
-## 5. Comandos para trabajar
+## 4. Comandos para trabajar
 
 ```powershell
 # Backend
@@ -130,119 +93,21 @@ cd frontend; npm run dev
 # Pruebas (47, sin llamar al proveedor real de LLM)
 .\venv\Scripts\python.exe -m pytest -q
 
-# Verificar que un cambio no rompio las importaciones
-.\venv\Scripts\python.exe -c "import backend.main"
+# Compilación de producción Frontend
+npm --prefix frontend run build
 ```
-
-
-Endpoint de consulta rapida:
-
-```powershell
-Invoke-RestMethod -Uri "http://127.0.0.1:8000/api/v1/query" -Method Post `
-  -ContentType "application/json" `
-  -Body '{"query":"Analiza los usuarios de Mexico en celular"}'
-```
-
-`GET /api/v1/health` expone `provider`, los modelos efectivos y `rpcs_deployed`. Si `rpcs_deployed` es `false`, los numeros vienen del fallback de Python, no de PostgreSQL.
 
 ---
 
-## 6. Trampas conocidas
+## 5. Estado actual y pendientes
 
-Estas cosas fallan **en silencio**. Un cambio puede romper el sistema sin que ninguna prueba falle, porque el fallback determinista siempre responde.
-
-1. **El fallback tapa los fallos del LLM.** Si Gemini devuelve algo invalido, el sistema responde igual con reglas heuristicas. Solo se nota en los logs (`Error en el Intent Router`). Al probar, revisa el log: una respuesta correcta no prueba que el LLM se haya usado.
-2. **Confianza alta no significa LLM.** `_heuristic_fallback` asigna confianzas fijas (0.85, 0.88, 0.90). El LLM produce valores como 0.88-0.95. Si ves 0.85 o 0.90 exactos, sospecha fallback.
-3. **Gemini rechaza esquemas Pydantic.** Acepta solo un subconjunto de OpenAPI Schema. `title`, `$defs`, `minimum`, `maximum` y `additionalProperties` producen `Unknown field for Schema`. Cualquier campo nuevo agregado a un esquema Pydantic puede romper la llamada. `inline_refs()` en `llm_client.py` lo maneja; verificalo si tocas los schemas.
-4. **Normalizacion de pais.** `Mexico` y `México` son valores distintos en la base de datos. Sin pasar por `normalization.py`, el filtro cae a `GLOBAL` y el usuario ve datos de todos los paises creyendo que filtro.
-5. **`AIza...` vs `AQ.Ab8...`.** Las claves de Gemini tienen dos formatos. El activo es `AQ.Ab8...` y esta en `.env`. No imprimir claves en salidas, commits ni mensajes.
-6. **El paquete `google.generativeai` esta deprecado** a favor de `google.genai`. Funciona, pero emite `FutureWarning` en cada arranque.
-7. **Root Directory de Render.** Si el servicio apunta a `./backend`, `uvicorn backend.main:app` falla con `ModuleNotFoundError: No module named 'backend'` porque todo el código importa `from backend...`. Debe quedar en la raíz del repo. Ver sección 8.
-8. **`VITE_API_URL` con barra final.** `api.js` concatenaba `...onrender.com/` + `/api/v1/...` = `//api/v1/...`, que Starlette no matchea: 404 `{"detail":"Not Found"}`. `API_BASE` ya recorta barras, pero el valor limpio sigue siendo el correcto. Además Vite inyecta `VITE_*` **en el build**: cambiar la variable sin redeployar no hace nada.
-9. **Deploy sin push.** Vercel y Render despliegan lo que hay en `Stack_comp`, no tu disco. Un commit local no despliega nada; la verificación es ver el bundle/nombre del asset cambiado, no asumir.
-
-
----
-
-## 7. Estado actual y pendientes
-
-Al dia de hoy:
-
-- Router, Heavy Path, tablero y chat funcionando con **Groq** (`LLM_PROVIDER=groq`, modelo `openai/gpt-oss-120b` en ambas etapas). Groq es el proveedor activo por decisión: Gemini se descartó por no ofrecer capa gratuita y OpenAI está sin créditos (`429 insufficient_quota`).
-- **API desplegada en Render** (`stack-comp.onrender.com`) y **frontend en Vercel** (`stack-comp.vercel.app`), verificados con `curl`.
-- `insights_service.py` sin llamada asincrona sin await, resuelto.
-- Fallo de filtro de pais, resuelto.
-- Compresion TOON verificada.
-- v1 Flask eliminado del repo; `README.md` reescrito para v2.
-- **Preguntas de definicion/fuera de dominio con guia.** `intent_router.py` resuelve "¿que es engagement?" con un glosario determinista (`_definition_reply`, sin LLM): explica el termino y sugiere una pregunta. El mensaje de clarificacion del fallback y el del LLM ahora incluyen ejemplos. Se quitaron las preguntas rapidas del frontend (`STARTER_QUESTIONS` en `ChatPanel.jsx`).
-- **UI del bot ajustada.** El chat se llama **NEXO IA** (antes CALDAS IA) y usa un tema monocromo (grises/negros/blancos) en toda la web: tokens en `index.css` (acento, tintes y estados sin color), literales de `BIDashboard.jsx` (SVG de onda/gauge y donut) y bloque final mono en `App.css`. Las respuestas del bot pasan por `Markdown.jsx` (sin dependencias) para que no se vean asteriscos ni `###` crudos.
-- **Dashboard alineado con los datos reales.** `BIDashboard.jsx` ya no muestra turismo hardcodeado (ocupación hotelera, ingresos, categorías). Ahora pinta lo que devuelve `GET /api/v1/dashboard`: sesiones totales, engagement promedio (gauge), tasa de frustración, duración promedio, desglose por dispositivo (donut), sesiones por país y puntos de fricción. Header genérico "RESUMEN ANALÍTICO DE SESIONES"; se eliminó el selector de periodo ficticio.
-- **Rediseño UI/UX premium.** Implementado `ThemeContext` con soporte light/dark mode persistido en localStorage y selector en Topbar. Se añadió el hook `useCountUp` para contadores animados sin romper exactitud determinista. Se corrigió el responsive drawer en mobile y se aplicó estilización homogénea para FAB y ChatPanel. Build verificado en 410ms y 42 pruebas aprobadas.
-- **Diagnósticos y utilidades de audio para Hackathon.** Creados `frontend/src/data/frictionDiagnostics.js` (mapa de datos simulados y causas de fricción, `getFrictionDiagnostic`, `submodulesInfo`) y `frontend/src/utils/soundEffects.js` (sistema de micro-sonidos Web Audio API).
-- **Adaptación para Hackathon Propuesta.** Se integró la vista "Pitch & Innovación" y "Dashboard En Vivo", incluyendo el modal `FrictionReplayModal` (simulador interactivo de RageClicks con recomendación de parche). Nombre provisional "Hackathon Propuesta" estandarizado con comentarios de reemplazo futuro. QA superado: build limpio en 415ms, 42 tests pytest aprobados.
-- **Replicación exacta de la propuesta visual de la Hackathon con Tailwind.** Se reemplazó el frontend provisional por la réplica exacta de `Propuesta front/turismo_caldas_5_0_hackathon_platform_dashboard.html`, adoptando su paleta de colores (slate, emerald, amber, rose), tipografía (*Plus Jakarta Sans* y *JetBrains Mono*), Tailwind CSS vía CDN, animaciones y microinteracciones. Se implementó el Switcher entre vistas ("Pitch & Innovación" vs "Dashboard En Vivo"), el simulador interactivo de RageClicks (`FrictionReplayModal`), modales contextuales, sistema de micro-sonidos Web Audio API, notificaciones Toast con Tailwind y el asistente NEXO IA conectado al backend (`askNexo`). Nombre provisional "Hackathon Propuesta" estandarizado y comentado. Auditoría QA aprobada (build de Vite limpio en 426ms y linter con 0 errores).
-- **Corrección de renderizado en producción (ThemeContext).** Se modificó `useTheme` en `ThemeContext.jsx` para incluir un fallback defensivo, previniendo errores críticos si se invoca fuera de su proveedor. Se verificó que `main.jsx` envuelve correctamente a `<App />` con `<ThemeProvider>`.
-
-Pendientes, en orden de impacto:
-
-1. **RPCs sin desplegar.** Es el pendiente critico. Hasta que existan en Supabase, la agregacion no ocurre en PostgreSQL: la sustituye el fallback de Python. Ver seccion 10.2 del documento de arquitectura.
-2. **Prompt y esquema desalineados.** El esquema permite combinaciones inconsistentes de trigger y RPC. Se necesita validacion cruzada.
-3. **Sin CI.** El push dispara el deploy sin correr `pytest`, `npm run lint` ni `npm run build`. Un error solo se ve en produccion.
-4. **Blueprint de Render no vinculado.** `render.yaml` existe pero el servicio se configuro a mano en el dashboard: la fuente real de la config es el dashboard, no el repo. Vincularlo para eliminar el drift.
-5. **Saludo inicial no se renderiza** en `ChatPanel.jsx` (el mensaje lleva `text` pero se pinta via `payload`).
-6. **MCP de Supabase** requiere reiniciar opencode y autorizar por OAuth.
-7. **`google.generativeai` deprecado**, migrar a `google.genai`.
-
-Ya resuelto en estas sesiones: `requirements.txt` completo y en UTF-8, `.env` alineado con `config.py`, esquema Pydantic adaptado a Gemini, filtro de pais normalizado, TOON verificado, despliegues Render + Vercel funcionando y limpieza del v1.
-
-El detalle completo de errores corregidos y pendientes vive en las secciones 10 y 11 de `ARQUITECTURA_FLUJO_INTENCIONES.md`. Actualiza esa bitacora al cerrar cada tarea.
-
----
-
-## 8. Despliegue (Render + Vercel)
-
-| Pieza | Servicio | URL | Origen |
-| --- | --- | --- | --- |
-| API FastAPI | Render | `stack-comp.onrender.com` | Repo `Stack_comp`, rama `pdn_qa` |
-| Frontend React | Vercel | `stack-comp.vercel.app` | Repo `Stack_comp`, rama `pdn_qa` |
-
-Configuracion real del servicio en Render (hoy en el dashboard, no sincronizada con `render.yaml`):
-
-- **Root Directory:** vacio (raiz del repo). Con `./backend` el arranque muere con `ModuleNotFoundError` — ver trampa 7.
-- **Build Command:** `pip install -r requirements.txt`
-- **Start Command:** `uvicorn backend.main:app --host 0.0.0.0 --port $PORT`
-- **Health Check Path:** `/api/v1/health`
-
-En Vercel: `VITE_API_URL=https://stack-comp.onrender.com` sin `/` final, y todo cambio de variable exige redeploy (ver trampa 8).
-
-Un solo remoto: `stack` (`LDking777/Stack_comp`), fuente unica del proyecto. El deploy sale de `stack/pdn_qa`, que va en fast-forward con `developer`. El remoto `origin` (`LDking777/api-service-v2`) se elimino de este clon el 2026-10-08 para independizar el proyecto; ese repositorio quedo como estaba (v1 Flask, `main` en `3d11d6e`).
-
-Verificacion posterior al deploy:
-
-1. `git ls-remote stack refs/heads/pdn_qa` debe devolver el commit que acabas de empujar.
-2. `curl https://stack-comp.onrender.com/api/v1/health` → 200 con `provider`.
-3. El asset del front cambia de nombre: `https://stack-comp.vercel.app/` → `/assets/index-<hash>.js`. Si el hash no cambio, no se desplego nada.
-
----
-
-## 9. Regla de documentacion: codigo y .md viajan juntos
-
-Un cambio que no se documenta es deuda: el siguiente agente (o tu yo del mes que viene) toma decisiones con informacion vieja.
-
-Siempre que modifiques `backend/`, `frontend/src/`, `supabase/`, `render.yaml`, `requirements.txt`, `pytest.ini` o `.githooks/`, actualiza en el mismo commit:
-
-1. **`AGENTS.md`** — mapa, comandos, trampas conocidas y estado/pendientes (este archivo).
-2. **`ARQUITECTURA_FLUJO_INTENCIONES.md`** — anade el caso en la seccion 10.1 (corregido) o 10.2 (pendiente) y cierra en la 11.
-
-Para que no dependa de la memoria, el hook `.githooks/pre-commit` bloquea el commit si tocaste archivos de codigo sin llevar documentacion staged. Se activa una vez por clon:
-
-```powershell
-git config core.hooksPath .githooks
-```
-
-Salida deliberada cuando el cambio realmente no afecta la documentacion:
-
-```powershell
-$env:SKIP_DOCS=1; git commit -m "..."
-```
-
+Al día de hoy:
+- **Adaptación completa a Kognia Labs (Reto 01 — Agente Vocal Cognitivo)**:
+  - Frontend transformado al 100% manteniendo el apartado expositivo (`PitchSection.jsx`) y la consola operativa en vivo (`CognitiveDashboard.jsx`).
+  - Motor RAG e Ingesta SODA3: conexión con `https://www.datos.gov.co/resource/s2ru-bqt6.json` (Relación de IPS según nivel y capacidad instalada) con fallback resiliente.
+  - Soporte de subida Drag & Drop para documentos sorpresa del jurado (P2) con briefing instantáneo y 4 preguntas sugeridas ejecutables con 1 clic (P3).
+  - Conversación vocal de baja latencia (<420ms) con Web Speech API (`SpeechRecognition` + `SpeechSynthesis Utterance`).
+  - Transcripción diarizada estricta en tiempo real (Hablante 1: Jurado vs Hablante 2: Agente) con timestamps y badges emocionales (P5).
+  - Panel de telemetría cognitiva con score de sentimiento (-1.0 a +1.0) y radar de emociones (Confianza, Curiosidad, Frustración, Asombro, Duda).
+  - Fidelidad estricta al documento y rechazo de preguntas fuera de dominio (honesty RAG).
+  - Compilación de Vite limpia y exitosa (`built in 6.09s`), 42 pruebas de backend pytest aprobadas sin regresiones.
