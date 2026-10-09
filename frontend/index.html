@@ -1,15 +1,99 @@
 <!doctype html>
-<html lang="es">
+<html lang="es" class="dark">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Turismo Caldas 5.0 · Dashboard & CALDAS IA</title>
+    <!-- [NOMBRE PROVISIONAL]: Reemplazar cuando se definan los puntos de la hackathon -->
+    <title>Hackathon Propuesta — Smart Tourism Experience Analytics</title>
+    
+    <!-- Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+    
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        darkMode: 'class',
+        theme: {
+          extend: {
+            fontFamily: {
+              sans: ['"Plus Jakarta Sans"', 'sans-serif'],
+              mono: ['"JetBrains Mono"', 'monospace'],
+            },
+            colors: {
+              brand: {
+                50: '#ecfdf5',
+                100: '#d1fae5',
+                400: '#34d399',
+                500: '#10b981',
+                600: '#059669',
+                700: '#047857',
+                800: '#065f46',
+                900: '#064e3b',
+              },
+              caldas: {
+                gold: '#eab308',
+                emerald: '#10b981',
+                coffee: '#78350f',
+              }
+            }
+          }
+        }
+      }
+    </script>
+
+    <!-- Lucide Icons, Chart.js, Tone.js will be loaded as npm modules if possible, or we can keep them out if React manages them. -->
+    <!-- The app uses 'lucide-react' so we don't need the lucide unpkg. 'Chart.js' and 'Tone.js' might be used from npm. -->
+    
+    <!-- Custom CSS for glassmorphism and animations -->
+    <style>
+      /* Custom Scrollbar */
+      ::-webkit-scrollbar {
+        width: 6px;
+        height: 6px;
+      }
+      ::-webkit-scrollbar-track {
+        background: rgba(0, 0, 0, 0.05);
+      }
+      .dark ::-webkit-scrollbar-track {
+        background: rgba(255, 255, 255, 0.02);
+      }
+      ::-webkit-scrollbar-thumb {
+        background: rgba(100, 116, 139, 0.4);
+        border-radius: 9999px;
+      }
+      ::-webkit-scrollbar-thumb:hover {
+        background: rgba(100, 116, 139, 0.7);
+      }
+
+      .glass-card {
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+      }
+
+      .friction-pulse {
+        animation: pulse-ring 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+      }
+      @keyframes pulse-ring {
+        0%, 100% { opacity: 1; transform: scale(1); }
+        50% { opacity: 0.6; transform: scale(1.05); }
+      }
+
+      /* Radar sweep animation */
+      .radar-sweep {
+        background: conic-gradient(from 0deg at 50% 50%, rgba(16, 185, 129, 0) 0deg, rgba(16, 185, 129, 0.25) 300deg, rgba(16, 185, 129, 0.8) 360deg);
+        animation: sweep 4s linear infinite;
+      }
+      @keyframes sweep {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
+      }
+    </style>
   </head>
-  <body>
+  <body class="bg-slate-50 text-slate-800 dark:bg-[#0c0f14] dark:text-slate-100 font-sans transition-colors duration-200 antialiased min-h-screen selection:bg-brand-500 selection:text-white">
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
   </body>
