@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { getDashboard, askNexo, getOrCreateSessionId } from "./api";
+import { getDashboard, askNexo, getOrCreateSessionId, getWhatsAppConfig } from "./api";
 import { useTheme } from "./context/ThemeContext";
 import { toggleSoundEnabled, isSoundEnabled, playTone } from "./utils/soundEffects";
 import BIDashboard from "./components/BIDashboard";
@@ -7,8 +7,9 @@ import CognitiveDashboard from "./components/CognitiveDashboard";
 import PitchSection from "./components/PitchSection";
 import ChatPanel from "./components/ChatPanel";
 import HomePage from "./pages/HomePage";
+import WhatsAppModal from "./components/WhatsAppModal";
 import ToastContainer, { showToast } from "./components/ToastContainer";
-import { Menu, Sparkles, LayoutDashboard, Volume2, VolumeX, Moon, Sun, Database, MapPin, Radio, House } from "lucide-react";
+import { Menu, Sparkles, LayoutDashboard, Volume2, VolumeX, Moon, Sun, Database, MapPin, Radio, House, MessageCircle } from "lucide-react";
 import "./App.css";
 
 export default function App() {
@@ -24,6 +25,8 @@ export default function App() {
   const [soundOn, setSoundOn] = useState(isSoundEnabled());
   const [currentTime, setCurrentTime] = useState(new Date());
   const [sessionId] = useState(() => getOrCreateSessionId());
+  const [waModalOpen, setWaModalOpen] = useState(false);
+  const [waConfig, setWaConfig] = useState(null);
 
   useEffect(() => {
     if (theme === "dark") {
@@ -55,6 +58,10 @@ export default function App() {
       fetchDashboard();
     }
   }, [fetchDashboard, activeView]);
+
+  useEffect(() => {
+    getWhatsAppConfig().then(setWaConfig);
+  }, []);
 
   const handleAsk = useCallback(async (question, options = {}) => {
     setThinking(true);
@@ -180,6 +187,15 @@ export default function App() {
             </div>
 
             <button 
+              onClick={() => { playTone("click"); setWaModalOpen(true); }}
+              title="Chatear con Nexo IA en WhatsApp" 
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 text-xs font-semibold transition-all shadow-xs"
+            >
+              <MessageCircle className="w-4 h-4 text-emerald-500" />
+              <span className="hidden md:inline">WhatsApp</span>
+            </button>
+
+            <button 
               onClick={handleSoundToggle} 
               title="Activar/Desactivar micro-sonidos" 
               className="p-2 rounded-lg text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 dark:text-slate-400 transition-colors"
@@ -210,7 +226,7 @@ export default function App() {
       {/* Contenido Principal segun la vista seleccionada */}
       <div className="min-h-[calc(100vh-3.5rem)] flex relative">
         {activeView === "home" && (
-          <HomePage>
+          <HomePage onOpenWhatsApp={() => { playTone("click"); setWaModalOpen(true); }}>
             <ChatPanel
               embedded
               ask={handleAsk}
@@ -261,6 +277,12 @@ export default function App() {
           sessionId={sessionId}
         />
       )}
+
+      <WhatsAppModal 
+        isOpen={waModalOpen} 
+        onClose={() => setWaModalOpen(false)} 
+        config={waConfig} 
+      />
 
       <ToastContainer />
     </div>

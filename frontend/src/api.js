@@ -175,12 +175,23 @@ async function askLiveTool(pregunta) {
   return res.json();
 }
 
+async function getWhatsAppConfig() {
+  try {
+    const res = await fetch(`${API_BASE}/api/v1/whatsapp/config`);
+    if (!res.ok) return { enabled: false };
+    return res.json();
+  } catch {
+    return { enabled: false };
+  }
+}
+
 export {
   getDashboard,
   askNexo,
   getHealth,
   getLiveToken,
   askLiveTool,
+  getWhatsAppConfig,
   uploadDocument,
   listDocuments,
   clearSessionMemory,
