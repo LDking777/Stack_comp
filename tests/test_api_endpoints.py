@@ -163,3 +163,47 @@ def test_dashboard_responde_con_contrato(client):
     assert body["kpis"]["total_prestadores"] == 500
     assert body["fuente"]["dataset_id"] == "s2ru-bqt6"
     assert client.llm_fake.calls == 0, "el tablero no debe gastar LLM"
+
+
+# ============================================================
+# VOZ / GEMINI LIVE
+# ============================================================
+
+def test_live_token_entrega_credencial_efimera(client, monkeypatch):
+    async def fake_create():
+        return {
+            "ok": True,
+            "token": "auth_tokens/test",
+            "model": "gemini-3.8-live",
+            "expires_at": "2030-01-01T00:00:00Z",
+            "new_session_expires_at": "2030-01-01T00:01:00Z",
+        }
+
+    monkeypatch.setattr("backend.main.live_token_service.create_token", fake_create)
+
+    body = client.post("/api/v1/live/token").json()
+    assert body["token"] == "auth_tokens/test"
+    assert body["model"] == "gemini-3.8-live"
+
+
+def test_live_token_devuelve_503_si_no_hay_acceso(client, monkeypatch):
+    async def fake_create():
+        return {"ok": False, "error": "GEMINI_API_KEY no configurada en el backend."}
+
+    monkeypatch.setattr("backend.main.live_token_service.create_token", fake_create)
+
+    assert client.post("/api/v1/live/token").status_code == 503
+
+
+def test_live_tool_reutiliza_el_pipeline_determinista(client):
+    body = client.post(
+        "/api/v1/live/tool", json={"pregunta": "Cuantas IPS hay en Antioquia"}
+    ).json()
+
+    assert body["verificado"] is True
+    assert "1,234" in body["respuesta"]
+    assert "**" not in body["respuesta"], "la herramienta de voz debe devolver texto plano"
+
+
+def test_live_tool_rechaza_pregunta_vacia(client):
+    assert client.post("/api/v1/live/tool", json={"pregunta": ""}).status_code == 422

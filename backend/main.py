@@ -1,4 +1,5 @@
 import asyncio
+import re
 import time
 import logging
 from typing import Any, Dict
@@ -8,7 +9,14 @@ from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.config import settings
-from backend.schemas.api_schemas import QueryRequest, QueryResponse, LatencyMetrics
+from backend.schemas.api_schemas import (
+    LiveTokenResponse,
+    LiveToolRequest,
+    LiveToolResponse,
+    QueryRequest,
+    QueryResponse,
+    LatencyMetrics,
+)
 from backend.schemas.router_schemas import IntentTrigger, QueryOperation
 from backend.services.intent_router import intent_router, route_stats
 from backend.services.datosgov_service import (
@@ -20,6 +28,7 @@ from backend.services.toon_service import toon_compressor
 from backend.services.insights_service import insights_generator
 from backend.services.knowledge_service import knowledge_service
 from backend.services.llm_client import llm_client
+from backend.services.live_token_service import live_token_service
 
 # Configuración de logs
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -136,14 +145,20 @@ def _format_fast_path(kpis_result: Dict[str, Any]) -> str:
     )
 
 
-# 2. Endpoint de Consulta Principal (Orquestación del Flujo de Intenciones)
-@app.post("/api/v1/query", response_model=QueryResponse, summary="Procesa la consulta del usuario mediante el Flujo de Intenciones")
-async def process_user_query(payload: QueryRequest):
-    total_start = time.perf_counter()
-    user_query = payload.query.strip()
+def _to_plain_text(markdown: str) -> str:
+    """Quita el marcado markdown para que el TTS de Live no lea asteriscos."""
+    text = re.sub(r"^#{1,6}\s*", "", markdown, flags=re.MULTILINE)
+    text = text.replace("**", "").replace("__", "").replace("`", "")
+    text = re.sub(r"^\s*[-*]\s+", "", text, flags=re.MULTILINE)
+    text = re.sub(r"^\s*\d+[.)]\s+", "", text, flags=re.MULTILINE)
+    text = text.replace("_", "")
+    return re.sub(r"\n{3,}", "\n\n", text).strip()
 
-    if not user_query:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="La consulta no puede estar vacía.")
+
+# Motor del pipeline. Lo comparten el endpoint de texto y la herramienta de
+# voz: así la conversación Live nunca calcula, siempre narra estas cifras.
+async def _execute_query(user_query: str) -> QueryResponse:
+    total_start = time.perf_counter()
 
     # --- PASO 1: Router de Intenciones (Fast Path) ---
     decision, router_lat_ms = await intent_router.route_intent(user_query)
@@ -244,6 +259,40 @@ async def process_user_query(payload: QueryRequest):
     )
 
 
+# 2. Endpoint de Consulta Principal (Orquestación del Flujo de Intenciones)
+@app.post("/api/v1/query", response_model=QueryResponse, summary="Procesa la consulta del usuario mediante el Flujo de Intenciones")
+async def process_user_query(payload: QueryRequest):
+    user_query = payload.query.strip()
+    if not user_query:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="La consulta no puede estar vacía.")
+    return await _execute_query(user_query)
+
+
+# 2b. Voz: credencial efímera para que el navegador abra la sesión de Gemini Live.
+@app.post("/api/v1/live/token", response_model=LiveTokenResponse, summary="Mintea una credencial efímera de Gemini Live (la API key no sale del backend)")
+async def create_live_token():
+    result = await live_token_service.create_token()
+    if not result.get("ok"):
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=result.get("error"))
+    return LiveTokenResponse(
+        token=result["token"],
+        model=result["model"],
+        expires_at=result.get("expires_at"),
+        new_session_expires_at=result.get("new_session_expires_at"),
+    )
+
+
+# 2c. Voz: herramienta que Gemini Live invoca para obtener cifras verificadas.
+#     Reutiliza el pipeline determinista; el modelo solo narra la respuesta.
+@app.post("/api/v1/live/tool", response_model=LiveToolResponse, summary="Ejecuta la consulta determinista para la herramienta de Gemini Live")
+async def run_live_tool(payload: LiveToolRequest):
+    result = await _execute_query(payload.pregunta.strip())
+    return LiveToolResponse(
+        respuesta=_to_plain_text(result.formatted_message),
+        verificado=result.is_safe,
+    )
+
+
 # 3. Endpoint de Tableros Analíticos (Para alimentar el Dashboard Visual)
 @app.get("/api/v1/dashboard", summary="Obtiene métricas agregadas y datos tabulares para el dashboard visual")
 async def get_dashboard_data():
@@ -324,6 +373,12 @@ async def healthcheck():
         },
         "mcp": {
             "enabled": settings.MCP_ENABLED,
+        },
+        "live_voz": {
+            "enabled": live_token_service.available,
+            "model": settings.GEMINI_LIVE_MODEL,
+            "credenciales": "efimeras (auth_tokens, v1alpha; Google Developer API)",
+            "nota": "La GEMINI_API_KEY permanece en el backend; el navegador recibe solo el token de corta vida.",
         },
         "knowledge": {
             "available": knowledge_service.available,
