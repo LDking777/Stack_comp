@@ -13,7 +13,7 @@ import pytest
 from backend.config import settings
 from backend.schemas.router_schemas import IntentTrigger, QueryOperation
 from backend.services.llm_client import describe_error, inline_refs
-from backend.services.intent_router import intent_router, route_stats
+from backend.services.intent_router import _list_intent, intent_router, route_stats
 
 from tests.conftest import FALLBACK_CONFIDENCES, FakeLLM, make_decision
 
@@ -221,6 +221,77 @@ async def test_canonicalize_normaliza_nivel_y_grupo(patch_llm):
     decision, _ = await intent_router.route_intent("Cuantas camas hay en IPS de nivel 3")
 
     assert decision.query_intent.nivel_atencion_filter == "3"
+    assert decision.query_intent.grupo_capacidad_filter == "CAMAS"
+
+
+async def test_canonicalize_normaliza_descripcion_capacidad(patch_llm):
+    patch_llm(
+        FakeLLM(
+            result=(
+                make_decision(
+                    confidence=0.93,
+                    operation=QueryOperation.SUM_CAPACITY,
+                    grupo_capacidad_filter="camas",
+                    descripcion_capacidad_filter="camas pediatricas",
+                ),
+                8.0,
+            )
+        )
+    )
+
+    decision, _ = await intent_router.route_intent(
+        "Cuántas camas pediátricas hay en Antioquia"
+    )
+
+    assert decision.query_intent.grupo_capacidad_filter == "CAMAS"
+    assert decision.query_intent.descripcion_capacidad_filter == "Pediátrica"
+
+
+async def test_fallback_resuelve_subtipo_de_capacidad(patch_llm):
+    patch_llm(FakeLLM(available=False, init_error="sin proveedor"))
+
+    decision, _ = await intent_router.route_intent(
+        "¿Cuántas camas pediátricas hay en Antioquia?"
+    )
+
+    assert decision.query_intent.operation == QueryOperation.SUM_CAPACITY
+    assert decision.query_intent.departamento_filter == "Antioquia"
+    assert decision.query_intent.grupo_capacidad_filter == "CAMAS"
+    assert decision.query_intent.descripcion_capacidad_filter == "Pediátrica"
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "Dame el NIT de una IPS",
+        "Busca por código de prestador 123",
+        "Muéstrame el nombre de la IPS en Medellín",
+        "Lista las IPS del dataset",
+        "Lista los prestadores del dataset",
+    ],
+)
+async def test_consultas_identificables_se_guian_a_analisis_agregado(patch_llm, query):
+    fake = patch_llm(FakeLLM(result=(make_decision(), 8.0)))
+
+    decision, _ = await intent_router.route_intent(query)
+
+    assert fake.calls == 0
+    assert decision.trigger == IntentTrigger.TRIGGER_CLARIFICATION
+    assert "agregadas" in decision.security_reasoning
+
+
+def test_listado_de_ips_individuales_no_es_un_listado_analitico():
+    assert _list_intent("Lista las IPS del dataset") is None
+
+
+def test_listado_de_descripciones_filtra_por_grupo_y_territorio():
+    decision = _list_intent(
+        "Lista las descripciones de capacidad de camas en Antioquia"
+    )
+
+    assert decision is not None
+    assert decision.query_intent.group_by == "nom_descripcion_capacidad"
+    assert decision.query_intent.departamento_filter == "Antioquia"
     assert decision.query_intent.grupo_capacidad_filter == "CAMAS"
 
 

@@ -98,6 +98,7 @@ def _build_query_spec(decision) -> Dict[str, Any]:
         "naturaleza": params.naturaleza_filter,
         "num_nivel_atencion": params.nivel_atencion_filter,
         "nom_grupo_capacidad": params.grupo_capacidad_filter,
+        "nom_descripcion_capacidad": params.descripcion_capacidad_filter,
     }
     return {
         "operation": params.operation.value,

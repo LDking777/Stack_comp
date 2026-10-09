@@ -213,39 +213,43 @@ export default function BIDashboard({ data, loading, error, onRetry, onInspect, 
             <div className="p-6 rounded-2xl bg-white dark:bg-[#12161f] border border-slate-200/80 dark:border-slate-800/80 shadow-sm">
               <div className="flex items-center justify-between mb-4">
                 <div>
-                  <h2 className="text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-300">Muestra de registros</h2>
-                  <p className="text-[11px] text-slate-400 mt-0.5">Filas crudas del dataset para inspección rápida</p>
+                  <h2 className="text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-300">Muestra analítica de capacidad</h2>
+                  <p className="text-[11px] text-slate-400 mt-0.5">Ubicación y tipo de recurso, sin identificadores de IPS</p>
                 </div>
-                <button onClick={() => { playTone("default"); onInspect("¿Qué prestadores y sedes hay en el dataset?"); }} className="text-[11px] text-emerald-500 font-semibold hover:underline flex items-center gap-0.5">
-                  Preguntar <ChevronRight className="w-3 h-3" />
+                <button onClick={() => { playTone("default"); onInspect("Desglosa la capacidad instalada por departamento y tipo de recurso"); }} className="text-[11px] text-emerald-500 font-semibold hover:underline flex items-center gap-0.5">
+                  Consultar distribución <ChevronRight className="w-3 h-3" />
                 </button>
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs">
                   <thead>
                     <tr className="text-[10px] uppercase tracking-wider text-slate-400 border-b border-slate-200 dark:border-slate-800">
-                      <th className="py-2 pr-4 font-semibold">Prestador</th>
-                      <th className="py-2 pr-4 font-semibold">Sede</th>
                       <th className="py-2 pr-4 font-semibold">Departamento</th>
                       <th className="py-2 pr-4 font-semibold">Municipio</th>
                       <th className="py-2 pr-4 font-semibold">Naturaleza</th>
+                      <th className="py-2 pr-4 font-semibold">Nivel</th>
+                      <th className="py-2 pr-4 font-semibold">Grupo</th>
+                      <th className="py-2 pr-4 font-semibold">Descripción</th>
+                      <th className="py-2 pr-4 font-semibold text-right">Cantidad</th>
                     </tr>
                   </thead>
                   <tbody>
                     {recent.map((r, i) => (
                       <tr key={i} className="border-b border-slate-100 dark:border-slate-800/50 hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors">
-                        <td className="py-2 pr-4 text-slate-700 dark:text-slate-200 max-w-[16rem] truncate">{r.nombre_prestador || "—"}</td>
-                        <td className="py-2 pr-4 text-slate-500 dark:text-slate-400 max-w-[12rem] truncate">{r.nom_sede_ips || "—"}</td>
                         <td className="py-2 pr-4 text-slate-700 dark:text-slate-200">{r.departamento || "—"}</td>
                         <td className="py-2 pr-4 text-slate-500 dark:text-slate-400">{r.municipio || "—"}</td>
                         <td className="py-2 pr-4">
                           <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">{r.naturaleza || "—"}</span>
                         </td>
+                        <td className="py-2 pr-4 text-slate-500 dark:text-slate-400">{r.num_nivel_atencion || "—"}</td>
+                        <td className="py-2 pr-4 text-slate-500 dark:text-slate-400">{r.nom_grupo_capacidad || "—"}</td>
+                        <td className="py-2 pr-4 text-slate-500 dark:text-slate-400">{r.nom_descripcion_capacidad || "—"}</td>
+                        <td className="py-2 pr-4 text-right tabular-nums text-slate-700 dark:text-slate-200">{r.num_cantidad_capacidad_instalada || "0"}</td>
                       </tr>
                     ))}
                     {recent.length === 0 && (
                       <tr>
-                        <td colSpan={5} className="py-6 text-center text-slate-400">Sin registros disponibles.</td>
+                        <td colSpan={7} className="py-6 text-center text-slate-400">Sin registros disponibles.</td>
                       </tr>
                     )}
                   </tbody>

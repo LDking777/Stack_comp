@@ -10,7 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from backend.config import settings
-from backend.main import app
+from backend.main import _build_query_spec, app
 from backend.schemas.router_schemas import IntentTrigger, QueryOperation
 from backend.services import intent_router as intent_router_module
 from backend.services import llm_client as llm_client_module
@@ -18,6 +18,19 @@ from backend.services import datosgov_service as datosgov_module
 from backend.services import supabase_service as supabase_module
 
 from tests.conftest import FakeLLM, make_decision
+
+
+def test_build_query_spec_incluye_descripcion_de_capacidad():
+    decision = make_decision(
+        operation=QueryOperation.SUM_CAPACITY,
+        grupo_capacidad_filter="CAMAS",
+        descripcion_capacidad_filter="Pediátrica",
+    )
+
+    spec = _build_query_spec(decision)
+
+    assert spec["filters"]["nom_grupo_capacidad"] == "CAMAS"
+    assert spec["filters"]["nom_descripcion_capacidad"] == "Pediátrica"
 
 
 @pytest.fixture

@@ -59,7 +59,7 @@
     "categoria": "calidad_datos",
     "ambito": "GLOBAL",
     "directriz": "Un prestador puede tener varias sedes y cada sede varias capacidades: no confundas el número de registros con el número de IPS.",
-    "criterios_evidencia": "count(distinct c_digo_prestador) versus count(*) de filas.",
+    "criterios_evidencia": "conteo agregado de prestadores distintos frente al conteo de filas, sin devolver identificadores.",
     "prioridad": 2
   },
   {
