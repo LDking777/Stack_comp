@@ -1,13 +1,14 @@
 import { useState, useEffect, useCallback } from "react";
-import { getDashboard, askNexo } from "./api";
+import { getDashboard, askNexo, getOrCreateSessionId } from "./api";
 import { useTheme } from "./context/ThemeContext";
 import { toggleSoundEnabled, isSoundEnabled, playTone } from "./utils/soundEffects";
 import BIDashboard from "./components/BIDashboard";
 import CognitiveDashboard from "./components/CognitiveDashboard";
 import PitchSection from "./components/PitchSection";
 import ChatPanel from "./components/ChatPanel";
+import HomePage from "./pages/HomePage";
 import ToastContainer, { showToast } from "./components/ToastContainer";
-import { Menu, Sparkles, LayoutDashboard, Volume2, VolumeX, Moon, Sun, Database, MapPin, Radio } from "lucide-react";
+import { Menu, Sparkles, LayoutDashboard, Volume2, VolumeX, Moon, Sun, Database, MapPin, Radio, House } from "lucide-react";
 import "./App.css";
 
 export default function App() {
@@ -19,9 +20,10 @@ export default function App() {
   const [pendingQ, setPendingQ] = useState(null);
   const [consolePendingQ, setConsolePendingQ] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [activeView, setActiveView] = useState("cognitive"); // 'cognitive' | 'bi' | 'pitch'
+  const [activeView, setActiveView] = useState("home"); // 'home' | 'cognitive' | 'bi' | 'pitch'
   const [soundOn, setSoundOn] = useState(isSoundEnabled());
   const [currentTime, setCurrentTime] = useState(new Date());
+  const [sessionId] = useState(() => getOrCreateSessionId());
 
   useEffect(() => {
     if (theme === "dark") {
@@ -49,20 +51,22 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    fetchDashboard();
-  }, [fetchDashboard]);
+    if (activeView === "bi") {
+      fetchDashboard();
+    }
+  }, [fetchDashboard, activeView]);
 
-  const handleAsk = useCallback(async (question) => {
+  const handleAsk = useCallback(async (question, options = {}) => {
     setThinking(true);
     try {
-      const res = await askNexo(question);
+      const res = await askNexo(question, { ...options, sessionId });
       return { ok: true, data: res };
     } catch (err) {
       return { ok: false, error: err.message || "No se pudo consultar el backend." };
     } finally {
       setThinking(false);
     }
-  }, []);
+  }, [sessionId]);
 
   const openChatWith = useCallback((question) => {
     setPendingQ(question ?? "");
@@ -80,8 +84,8 @@ export default function App() {
   return (
     <div className="font-sans text-slate-800 dark:text-slate-100 bg-slate-50 dark:bg-[#0c0f14] min-h-screen selection:bg-emerald-500 selection:text-white transition-colors duration-200">
       
-      {/* Header Unificado Nexo IA / Kognia Labs */}
-      <header className="sticky top-0 z-40 w-full border-b border-slate-200 dark:border-slate-800/80 bg-white/80 dark:bg-[#0c0f14]/85 backdrop-blur-md transition-all">
+      {/* Header Unificado Nexo IA */}
+      <header className={`app-header sticky top-0 z-40 w-full border-b border-slate-200 dark:border-slate-800/80 bg-white/80 dark:bg-[#0c0f14]/85 backdrop-blur-md transition-all ${activeView === "home" ? "home-header" : ""}`}>
         <div className="px-4 lg:px-6 h-14 flex items-center justify-between gap-4">
           
           {/* Logo y Nombre */}
@@ -96,7 +100,7 @@ export default function App() {
             )}
             <div 
               className="flex items-center gap-2.5 cursor-pointer" 
-              onClick={() => { playTone("click"); setActiveView("cognitive"); }}
+              onClick={() => { playTone("click"); setActiveView("home"); }}
             >
               <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-brand-600 via-emerald-500 to-amber-400 flex items-center justify-center shadow-lg shadow-emerald-500/20 text-white font-black text-sm">
                 N
@@ -110,10 +114,24 @@ export default function App() {
                 </span>
               </div>
             </div>
+            {activeView === "home" && (
+              <span className="home-brand-divider">VOICE INTELLIGENCE</span>
+            )}
           </div>
 
-          {/* Switcher de Vistas: Consola Vocal vs Tablero BI vs Pitch */}
-          <div className="flex items-center bg-slate-100 dark:bg-slate-900/90 p-1 rounded-xl border border-slate-200 dark:border-slate-800 text-xs font-semibold">
+          {/* Switcher de Vistas: Inicio vs Consola Vocal vs Tablero BI vs Pitch */}
+          <div className="flex items-center bg-slate-100 dark:bg-slate-900/90 p-1 rounded-xl border border-slate-200 dark:border-slate-800 text-xs font-semibold overflow-x-auto">
+            <button 
+              onClick={() => { setActiveView("home"); playTone("click"); }} 
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all ${
+                activeView === "home" 
+                  ? "bg-white dark:bg-slate-800 shadow-sm text-slate-900 dark:text-white font-bold" 
+                  : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
+              }`}
+            >
+              <House className="w-3.5 h-3.5 text-emerald-500" />
+              <span>Inicio</span>
+            </button>
             <button 
               onClick={() => { setActiveView("cognitive"); playTone("click"); }} 
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all ${
@@ -191,6 +209,18 @@ export default function App() {
 
       {/* Contenido Principal segun la vista seleccionada */}
       <div className="min-h-[calc(100vh-3.5rem)] flex relative">
+        {activeView === "home" && (
+          <HomePage>
+            <ChatPanel
+              embedded
+              ask={handleAsk}
+              isThinking={thinking}
+              pendingQuestion={pendingQ}
+              onPendingHandled={() => setPendingQ(null)}
+              sessionId={sessionId}
+            />
+          </HomePage>
+        )}
         {activeView === "cognitive" && (
           <CognitiveDashboard 
             sidebarOpen={sidebarOpen}
@@ -221,13 +251,16 @@ export default function App() {
         )}
       </div>
 
-      {/* Asistente Flotante Secundario Nexo IA */}
-      <ChatPanel
-        ask={handleAsk}
-        isThinking={thinking}
-        pendingQuestion={pendingQ}
-        onPendingHandled={() => setPendingQ(null)}
-      />
+      {/* Asistente Flotante Secundario Nexo IA (activo cuando no es home embebido) */}
+      {activeView !== "home" && (
+        <ChatPanel
+          ask={handleAsk}
+          isThinking={thinking}
+          pendingQuestion={pendingQ}
+          onPendingHandled={() => setPendingQ(null)}
+          sessionId={sessionId}
+        />
+      )}
 
       <ToastContainer />
     </div>

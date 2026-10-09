@@ -2,10 +2,10 @@ import asyncio
 import re
 import time
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.config import settings
@@ -17,8 +17,13 @@ from backend.schemas.api_schemas import (
     QueryResponse,
     LatencyMetrics,
 )
+from backend.schemas.document_schemas import (
+    Citation,
+    DocumentListResponse,
+    DocumentUploadResponse,
+)
 from backend.schemas.router_schemas import IntentTrigger, QueryOperation
-from backend.services.intent_router import intent_router, route_stats
+from backend.services.intent_router import intent_router, is_conversational, route_stats
 from backend.services.datosgov_service import (
     CAPACITY_COLUMN,
     OPERATIONS,
@@ -29,6 +34,10 @@ from backend.services.insights_service import insights_generator
 from backend.services.knowledge_service import knowledge_service
 from backend.services.llm_client import llm_client
 from backend.services.live_token_service import live_token_service
+from backend.services.conversation_service import conversation_service
+from backend.services.document_service import document_service
+from backend.services.embeddings_service import embeddings_service
+from backend.services.supabase_service import supabase_service
 
 # Configuración de logs
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -50,6 +59,7 @@ async def lifespan(app: FastAPI):
     logger.info("🧠 Heavy Path Insights: %s", settings.INSIGHTS_MODEL)
     logger.info("🗄️ Fuente de datos: %s", settings.DATOS_GOV_RESOURCE_URL)
     logger.info("📚 Knowledge local: %s", knowledge_service.available)
+    logger.info("💾 Persistencia de sesión/documentos en Supabase: %s", supabase_service.available)
     yield
     logger.info("🛑 Deteniendo servicios...")
 
@@ -155,36 +165,107 @@ def _to_plain_text(markdown: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", text).strip()
 
 
+async def _document_response(
+    user_query: str,
+    answer,
+    hits,
+    session_id: Optional[str],
+    total_start: float,
+) -> QueryResponse:
+    """Empaqueta una respuesta RAG (documentos del usuario) con sus citas."""
+    citations = [
+        Citation(source=chunk.source, fragmento=chunk.text[:280])
+        for chunk, _ in hits[: settings.RAG_TOP_K]
+    ]
+    formatted = (
+        "### 📄 Respuesta desde tus documentos (RAG)\n\n"
+        f"{answer.respuesta}\n\n"
+        "_Fuente: documentos cargados en esta sesión. Las cifras del dataset de IPS "
+        "siguen saliendo de datos.gov.co vía SoQL._"
+    )
+    total_lat_ms = (time.perf_counter() - total_start) * 1000
+    await conversation_service.add_turn(session_id, "user", user_query)
+    await conversation_service.add_turn(session_id, "assistant", answer.respuesta)
+    return QueryResponse(
+        query=user_query,
+        trigger=IntentTrigger.TRIGGER_INSIGHTS,
+        formatted_message=formatted,
+        latency=LatencyMetrics(
+            router_latency_ms=0.0,
+            datosgov_latency_ms=0.0,
+            heavy_path_latency_ms=None,
+            total_pipeline_latency_ms=round(total_lat_ms, 2),
+        ),
+        is_safe=True,
+        answer_source="documents",
+        citations=citations,
+    )
+
+
 # Motor del pipeline. Lo comparten el endpoint de texto y la herramienta de
 # voz: así la conversación Live nunca calcula, siempre narra estas cifras.
-async def _execute_query(user_query: str) -> QueryResponse:
+async def _execute_query(
+    user_query: str,
+    session_id: Optional[str] = None,
+    use_documents: bool = False,
+) -> QueryResponse:
     total_start = time.perf_counter()
 
+    # Contexto de sesión persistido en Supabase. Sin session_id, sigue stateless.
+    history_text = await conversation_service.format_history(session_id)
+    has_docs = await document_service.has_documents(session_id)
+    doc_hits: list = []
+    conversational = is_conversational(user_query)
+
+    # Modo documentos explícito (el usuario pidió responder desde sus archivos).
+    if has_docs and use_documents and not conversational:
+        doc_hits = await document_service.search(session_id, user_query)
+        answer, _ = await document_service.answer(user_query, doc_hits, history_text)
+        return await _document_response(
+            user_query, answer, doc_hits, session_id, total_start
+        )
+
     # --- PASO 1: Router de Intenciones (Fast Path) ---
-    decision, router_lat_ms = await intent_router.route_intent(user_query)
+    decision, router_lat_ms = await intent_router.route_intent(user_query, history=history_text)
 
     # Verificación de Seguridad, saludos, definiciones y clarificaciones.
     if not decision.is_safe or decision.trigger == IntentTrigger.TRIGGER_CLARIFICATION:
+        # Fuera de dominio pero con documentos relevantes: responde desde ellos.
+        if decision.is_safe and has_docs and not conversational:
+            doc_hits = await document_service.search(session_id, user_query)
+            doc_relevant = bool(doc_hits) and doc_hits[0][1] >= settings.RAG_MIN_SCORE
+        else:
+            doc_relevant = False
+        if decision.is_safe and doc_relevant:
+            answer, _ = await document_service.answer(user_query, doc_hits, history_text)
+            return await _document_response(
+                user_query, answer, doc_hits, session_id, total_start
+            )
+
+        mensaje = (
+            decision.security_reasoning
+            or (
+                "Solo puedo analizar datos de IPS colombianas: departamentos, "
+                "municipios, naturaleza (pública/privada), niveles de atención y "
+                "capacidad instalada. Prueba con: «¿Cuántas IPS hay en Antioquia?» "
+                "o «¿Cuántas camas hay en Bogotá D.C?»."
+            )
+        )
+        await conversation_service.add_turn(session_id, "user", user_query)
+        await conversation_service.add_turn(session_id, "assistant", mensaje)
         total_lat_ms = (time.perf_counter() - total_start) * 1000
         return QueryResponse(
             query=user_query,
             trigger=decision.trigger,
             is_safe=decision.is_safe,
-            formatted_message=(
-                decision.security_reasoning
-                or (
-                    "Solo puedo analizar datos de IPS colombianas: departamentos, "
-                    "municipios, naturaleza (pública/privada), niveles de atención y "
-                    "capacidad instalada. Prueba con: «¿Cuántas IPS hay en Antioquia?» "
-                    "o «¿Cuántas camas hay en Bogotá D.C?»."
-                )
-            ),
+            formatted_message=mensaje,
             latency=LatencyMetrics(
                 router_latency_ms=round(router_lat_ms, 2),
                 datosgov_latency_ms=0.0,
                 heavy_path_latency_ms=None,
                 total_pipeline_latency_ms=round(total_lat_ms, 2),
             ),
+            answer_source="soql",
         )
 
     # --- PASO 2: Ejecución Determinista (agregación SoQL en datos.gov.co) ---
@@ -215,11 +296,15 @@ async def _execute_query(user_query: str) -> QueryResponse:
         # devuelve contexto vacío y el Heavy Path sigue sin directrices.
         knowledge = await knowledge_service.build_context(user_query)
 
+        doc_context = document_service.render_fragments(doc_hits) if doc_hits else ""
+
         qualitative_insight, heavy_lat_ms = await insights_generator.generate_insight(
             user_query=user_query,
             kpis=kpis_result,
             toon_context=toon_context,
             knowledge=knowledge,
+            history=history_text,
+            document_context=doc_context,
         )
 
         obs_text = "\n".join(
@@ -243,6 +328,9 @@ async def _execute_query(user_query: str) -> QueryResponse:
 
     total_lat_ms = (time.perf_counter() - total_start) * 1000
 
+    await conversation_service.add_turn(session_id, "user", user_query)
+    await conversation_service.add_turn(session_id, "assistant", formatted_message)
+
     return QueryResponse(
         query=user_query,
         trigger=decision.trigger,
@@ -256,6 +344,7 @@ async def _execute_query(user_query: str) -> QueryResponse:
             total_pipeline_latency_ms=round(total_lat_ms, 2),
         ),
         is_safe=True,
+        answer_source="soql",
     )
 
 
@@ -265,7 +354,14 @@ async def process_user_query(payload: QueryRequest):
     user_query = payload.query.strip()
     if not user_query:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="La consulta no puede estar vacía.")
-    return await _execute_query(user_query)
+    try:
+        return await _execute_query(
+            user_query, session_id=payload.session_id, use_documents=payload.use_documents
+        )
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+        ) from exc
 
 
 # 2b. Voz: credencial efímera para que el navegador abra la sesión de Gemini Live.
@@ -291,6 +387,88 @@ async def run_live_tool(payload: LiveToolRequest):
         respuesta=_to_plain_text(result.formatted_message),
         verificado=result.is_safe,
     )
+
+
+# 2d. Documentos (RAG): el usuario sube PDF/Word; se indexan en memoria por
+#     sesión. Las cifras del dataset siguen saliendo de SoQL, no del documento.
+@app.post("/api/v1/documents", response_model=DocumentUploadResponse, summary="Sube e indexa un documento (PDF/Word/TXT/MD) para responder preguntas sobre él")
+async def upload_document(
+    file: UploadFile = File(...),
+    session_id: str = Form(...),
+):
+    filename = file.filename or "documento"
+    data = await file.read()
+    if not data:
+        return DocumentUploadResponse(ok=False, session_id=session_id, error="El archivo está vacío.")
+    max_bytes = settings.RAG_MAX_FILE_MB * 1024 * 1024
+    if len(data) > max_bytes:
+        return DocumentUploadResponse(
+            ok=False,
+            session_id=session_id,
+            error=f"El archivo supera el límite de {settings.RAG_MAX_FILE_MB} MB.",
+        )
+    try:
+        info, total_chunks = await document_service.add_document(session_id, filename, data)
+    except ValueError as exc:  # formato no soportado o sin texto extraíble
+        logger.warning("Documento rechazado (%s): %s", filename, exc)
+        return DocumentUploadResponse(ok=False, session_id=session_id, error=str(exc))
+    except RuntimeError as exc:
+        logger.error("Dependencia de documentos no disponible para %s: %s", filename, exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+        ) from exc
+    except Exception as exc:
+        logger.error("Error indexando documento %s: %s", filename, exc)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="No se pudo indexar el documento; revisa el proveedor de embeddings y Supabase.",
+        ) from exc
+    if not info:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El documento no se pudo indexar.",
+        )
+    return DocumentUploadResponse(
+        ok=True,
+        session_id=session_id,
+        documento=info,
+        total_chunks=total_chunks,
+        documentos_sesion=len(await document_service.list_documents(session_id)),
+    )
+
+
+@app.get("/api/v1/documents/{session_id}", response_model=DocumentListResponse, summary="Lista los documentos indexados de una sesión")
+async def list_session_documents(session_id: str):
+    try:
+        documents = await document_service.list_documents(session_id)
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+        ) from exc
+    return DocumentListResponse(session_id=session_id, documentos=documents)
+
+
+@app.delete("/api/v1/documents/{session_id}", summary="Borra los documentos y la memoria de una sesión")
+async def delete_session_documents(session_id: str):
+    try:
+        removed = await document_service.clear(session_id)
+        await conversation_service.clear(session_id)
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+        ) from exc
+    return {"ok": True, "session_id": session_id, "documentos_eliminados": removed}
+
+
+@app.delete("/api/v1/sessions/{session_id}/history", summary="Borra solo el historial de conversación de una sesión")
+async def delete_session_history(session_id: str):
+    try:
+        await conversation_service.clear(session_id)
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+        ) from exc
+    return {"ok": True, "session_id": session_id}
 
 
 # 3. Endpoint de Tableros Analíticos (Para alimentar el Dashboard Visual)
@@ -347,8 +525,13 @@ async def get_dashboard_data():
 # 4. Healthcheck & Diagnóstico
 @app.get("/api/v1/health", summary="Verificación de estado de la arquitectura")
 async def healthcheck():
+    persistence_health = await supabase_service.healthcheck()
     return {
-        "status": "online" if llm_client.available else "degraded",
+        "status": (
+            "online"
+            if llm_client.available and persistence_health["ready"]
+            else "degraded"
+        ),
         "service": settings.APP_NAME,
         "models": {
             "provider": llm_client.provider,
@@ -379,6 +562,22 @@ async def healthcheck():
             "model": settings.GEMINI_LIVE_MODEL,
             "credenciales": "efimeras (auth_tokens, v1alpha; Google Developer API)",
             "nota": "La GEMINI_API_KEY permanece en el backend; el navegador recibe solo el token de corta vida.",
+        },
+        "documentos_rag": {
+            "enabled": embeddings_service.available and persistence_health["ready"],
+            "embedding_model": settings.GEMINI_EMBEDDING_MODEL,
+            "storage": "Supabase Storage privado" if persistence_health["ready"] else "no disponible",
+            "formatos": [".pdf", ".docx", ".txt", ".md"],
+            "top_k": settings.RAG_TOP_K,
+            "domain_min_score": settings.RAG_DOMAIN_MIN_SCORE,
+            "almacenamiento": "Supabase Postgres + pgvector",
+        },
+        "memoria_conversacion": {
+            "max_turnos": settings.CONVERSATION_MAX_TURNS,
+            "almacenamiento": "Supabase Postgres" if persistence_health["ready"] else "no disponible",
+        },
+        "persistencia": {
+            **persistence_health,
         },
         "knowledge": {
             "available": knowledge_service.available,

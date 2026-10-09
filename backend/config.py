@@ -38,6 +38,12 @@ class Settings(BaseSettings):
     GEMINI_ROUTER_MODEL: str = "gemini-2.5-flash"
     GEMINI_INSIGHTS_MODEL: str = "gemini-2.5-flash"
 
+    # Supabase: la service-role key solo se usa en el backend y nunca en Vite.
+    SUPABASE_URL: str = ""
+    SUPABASE_SECRET_KEY: str = ""
+    SUPABASE_SERVICE_ROLE_KEY: str = ""
+    SUPABASE_STORAGE_BUCKET: str = "nexo-documents"
+
     # ── Gemini Live API (voz bidireccional) ──
     # Credenciales efímeras: requieren el SDK `google-genai` (NO el
     # `google-generativeai` deprecado que usa llm_client) y la Gemini
@@ -49,6 +55,20 @@ class Settings(BaseSettings):
     GEMINI_LIVE_MODEL: str = "gemini-3.8-live"
     GEMINI_LIVE_TOKEN_TTL_MIN: int = 30        # vida del token (default docs)
     GEMINI_LIVE_NEW_SESSION_TTL_MIN: int = 1   # para iniciar la sesión (default docs)
+
+    # ── RAG de documentos (embeddings de Gemini) ──
+    # El backend extrae texto/embeddings y persiste documentos en Supabase.
+    GEMINI_EMBEDDING_MODEL: str = "gemini-embedding-001"
+    GEMINI_EMBEDDING_DIMENSIONS: int = 768
+    RAG_TOP_K: int = 4
+    RAG_CHUNK_CHARS: int = 900
+    RAG_CHUNK_OVERLAP: int = 150
+    RAG_MAX_FILE_MB: int = 10
+    RAG_MIN_SCORE: float = 0.35
+    RAG_DOMAIN_MIN_SCORE: float = 0.30
+
+    # ── Memoria de conversación (persistida en Supabase por sesión) ──
+    CONVERSATION_MAX_TURNS: int = 8
 
     # ── Timeouts del proveedor (segundos) ──
     # El router corre en cada consulta, pero no puede caerse al fallback por

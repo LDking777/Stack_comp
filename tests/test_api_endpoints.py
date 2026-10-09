@@ -15,6 +15,7 @@ from backend.schemas.router_schemas import IntentTrigger, QueryOperation
 from backend.services import intent_router as intent_router_module
 from backend.services import llm_client as llm_client_module
 from backend.services import datosgov_service as datosgov_module
+from backend.services import supabase_service as supabase_module
 
 from tests.conftest import FakeLLM, make_decision
 
@@ -54,6 +55,18 @@ def client(monkeypatch):
 
     monkeypatch.setattr(datosgov_module.datosgov_service, "execute", fake_execute)
     monkeypatch.setattr(datosgov_module.datosgov_service, "fetch_records", fake_records)
+
+    async def fake_persistence_health():
+        return {
+            "configured": False,
+            "ready": False,
+            "provider": None,
+            "error": "Configura Supabase en el backend.",
+        }
+
+    monkeypatch.setattr(
+        supabase_module.supabase_service, "healthcheck", fake_persistence_health
+    )
 
     with TestClient(app) as test_client:
         test_client.llm_fake = fake
@@ -122,6 +135,19 @@ def test_query_usa_la_decision_del_llm(client):
 def test_query_rechaza_vacio(client):
     response = client.post("/api/v1/query", json={"query": "   "})
     assert response.status_code == 400
+
+
+def test_query_con_sesion_sin_supabase_devuelve_error_explicito(client, monkeypatch):
+    monkeypatch.setattr(settings, "SUPABASE_URL", "")
+    monkeypatch.setattr(settings, "SUPABASE_SERVICE_ROLE_KEY", "")
+
+    response = client.post(
+        "/api/v1/query",
+        json={"query": "Cuantas IPS hay en Antioquia", "session_id": "nexo-test"},
+    )
+
+    assert response.status_code == 503
+    assert "SUPABASE_URL" in response.json()["detail"]
 
 
 def test_fast_path_devuelve_kpis_sin_narrativa(client):
