@@ -10,7 +10,16 @@ import pytest
 from fastapi.testclient import TestClient
 
 from backend.config import settings
-from backend.main import _build_query_spec, app
+from backend.main import (
+    _build_query_spec,
+    _facility_capacity_filters,
+    _facility_search_decision,
+    _facility_identifier_filters,
+    _empathy_prefix,
+    _is_facility_follow_up,
+    _is_facility_search_query,
+    app,
+)
 from backend.schemas.router_schemas import IntentTrigger, QueryOperation
 from backend.services import intent_router as intent_router_module
 from backend.services import llm_client as llm_client_module
@@ -31,6 +40,84 @@ def test_build_query_spec_incluye_descripcion_de_capacidad():
 
     assert spec["filters"]["nom_grupo_capacidad"] == "CAMAS"
     assert spec["filters"]["nom_descripcion_capacidad"] == "Pediátrica"
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "Necesito una IPS cerca de Manizales",
+        "¿Dónde puedo ir a un hospital en Caldas?",
+        "Busca IPS por NIT 900497151",
+    ],
+)
+def test_detecta_busquedas_de_sedes_ips(query):
+    assert _is_facility_search_query(query)
+
+
+def test_detecta_pregunta_abierta_sobre_ips_sin_fabricar_nombre():
+    query = "¿Qué IPS hay en Manizales?"
+    assert _is_facility_search_query(query)
+    assert _facility_identifier_filters(query) == {}
+
+
+def test_extrae_filtros_de_capacidad_y_nit_para_directorio():
+    query = "Busca una IPS cerca de Manizales con camas pediátricas, NIT 900497151"
+
+    assert _facility_capacity_filters(query) == {
+        "descripcion_capacidad_filter": "Pediátrica",
+        "grupo_capacidad_filter": "CAMAS",
+    }
+    assert _facility_identifier_filters(query) == {"nit_ips": "900497151"}
+
+
+def test_extrae_codigo_y_nombre_para_directorio():
+    assert _facility_identifier_filters(
+        "Busca IPS por código de prestador 504512253"
+    ) == {"c_digo_prestador": "504512253"}
+    assert _facility_identifier_filters(
+        "Busca IPS Instituto Oftalmológico en Manizales"
+    ) == {"nombre_prestador": "Instituto Oftalmológico"}
+    assert _facility_identifier_filters(
+        "Busca por nombre de la IPS Centro Médico San Juan"
+    ) == {"nombre_prestador": "Centro Médico San Juan"}
+
+
+async def test_seguimiento_hereda_ubicacion_previamente_mencionada(monkeypatch):
+    async def resolve_location(query):
+        if "Manizales" in query:
+            return "MANIZALES", "Caldas", False
+        return None, None, False
+
+    monkeypatch.setattr(
+        datosgov_module.datosgov_service,
+        "resolve_municipio_mention",
+        resolve_location,
+    )
+    history = (
+        "Usuario: Vivo en Manizales y necesito una IPS\n"
+        "Nexo: ### Directorio\n\n**Sedes encontradas (9):** ..."
+    )
+    query = "¿Cuál tiene más camas?"
+
+    assert _is_facility_follow_up(query, history)
+    decision, clarification = await _facility_search_decision(query, history)
+
+    assert clarification is None
+    assert decision.query_intent.municipio_filter == "MANIZALES"
+    assert decision.query_intent.grupo_capacidad_filter == "CAMAS"
+
+    department_decision, department_clarification = await _facility_search_decision(
+        "Busca IPS en Caldas", history
+    )
+    assert department_clarification is None
+    assert department_decision.query_intent.municipio_filter is None
+    assert department_decision.query_intent.departamento_filter == "Caldas"
+
+def test_tono_empatico_solo_ante_malestar_explicito():
+    assert _empathy_prefix("Estoy preocupada y no sé dónde ir")
+    assert _empathy_prefix("No puedo encontrar una IPS")
+    assert _empathy_prefix("No estoy preocupada") == ""
+    assert _empathy_prefix("¿Cuántas IPS hay en Caldas?") == ""
 
 
 @pytest.fixture
@@ -143,6 +230,81 @@ def test_query_usa_la_decision_del_llm(client):
     assert body["trigger"] == "TRIGGER_KPIS"
     assert body["is_safe"] is True
     assert client.llm_fake.calls == 1
+
+
+def test_busqueda_ips_por_municipio_devuelve_directorio_sin_llm(client, monkeypatch):
+    captured = {}
+
+    async def resolve_location(_query):
+        return "MANIZALES", "Caldas", False
+
+    async def execute(spec):
+        captured.update(spec)
+        return {
+            "establecimientos": [
+                {
+                    "nombre": "Instituto Oftalmológico de Caldas",
+                    "sede": "Sede Centro",
+                    "direccion": "Calle 10",
+                    "municipio": "MANIZALES",
+                    "departamento": "Caldas",
+                    "naturaleza": ["Privada"],
+                    "niveles_atencion": ["2"],
+                    "capacidades": [
+                        {"grupo": "CAMAS", "tipo": "Pediátrica", "cantidad": 3}
+                    ],
+                }
+            ],
+            "total_establecimientos": 1,
+            "resultados_limitados": False,
+        }
+
+    monkeypatch.setattr(datosgov_module.datosgov_service, "resolve_municipio_mention", resolve_location)
+    monkeypatch.setattr(datosgov_module.datosgov_service, "execute", execute)
+    response = client.post(
+        "/api/v1/query",
+        json={"query": "Necesito una IPS cerca de Manizales con camas pediátricas"},
+    )
+    body = response.json()
+
+    assert response.status_code == 200
+    assert client.llm_fake.calls == 0
+    assert captured["operation"] == "list_ips"
+    assert captured["filters"]["municipio"] == "MANIZALES"
+    assert captured["filters"]["departamento"] == "Caldas"
+    assert captured["filters"]["nom_grupo_capacidad"] == "CAMAS"
+    assert captured["filters"]["nom_descripcion_capacidad"] == "Pediátrica"
+    assert "Instituto Oftalmológico de Caldas" in body["formatted_message"]
+    assert "Calle 10" in body["formatted_message"]
+    assert "no incluye coordenadas" in body["formatted_message"]
+
+
+def test_busqueda_ips_por_nit_no_muestra_el_nit(client, monkeypatch):
+    captured = {}
+
+    async def resolve_location(_query):
+        return None, None, False
+
+    async def execute(spec):
+        captured.update(spec)
+        return {
+            "establecimientos": [],
+            "total_establecimientos": 0,
+            "resultados_limitados": False,
+        }
+
+    monkeypatch.setattr(datosgov_module.datosgov_service, "resolve_municipio_mention", resolve_location)
+    monkeypatch.setattr(datosgov_module.datosgov_service, "execute", execute)
+    response = client.post(
+        "/api/v1/query", json={"query": "Busca IPS por NIT 900497151"}
+    )
+    body = response.json()
+
+    assert response.status_code == 200
+    assert captured["operation"] == "list_ips"
+    assert captured["filters"]["nit_ips"] == "900497151"
+    assert "900497151" not in body["query"]
+    assert "900497151" not in body["formatted_message"]
 
 
 def test_query_rechaza_vacio(client):

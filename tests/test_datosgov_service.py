@@ -23,6 +23,7 @@ def _limpiar_cache():
     datosgov_module._CACHE.clear()
     datosgov_module._MUNICIPIOS.clear()
     datosgov_module._MUNICIPIOS_TS = 0.0
+    datosgov_module._MUNICIPIO_DEPARTMENTS.clear()
     yield
     datosgov_module._CACHE.clear()
 
@@ -167,7 +168,6 @@ async def test_sum_capacity_por_descripcion(service):
     [
         {"operation": "group_count", "group_by": "nombre_prestador"},
         {"operation": "list_distinct", "group_by": "nit_ips"},
-        {"operation": "count_registros", "filters": {"c_digo_prestador": "123"}},
     ],
 )
 async def test_rechaza_consultas_con_identificadores(spec, service):
@@ -199,6 +199,82 @@ async def test_list_distinct_ordena_por_conteo(service):
     assert result["categoria"] == "departamento"
     assert result["total_valores"] == 2
     assert result["valores_distintos"].startswith("Bogotá D.C (4647)")
+
+
+async def test_list_ips_deduplica_sede_y_no_expone_identificadores(monkeypatch):
+    svc = DatosGovService()
+    captured = {}
+    rows = [
+        {
+            "c_digo_prestador": "504512253",
+            "c_digo_sede": "123456",
+            "nombre_prestador": "Instituto Oftalmológico",
+            "nom_sede_ips": "Sede Centro",
+            "direcci_n": "Calle 10",
+            "municipio": "MANIZALES",
+            "departamento": "Caldas",
+            "naturaleza": "Privada",
+            "num_nivel_atencion": "2",
+            "nom_grupo_capacidad": "CONSULTORIOS",
+            "nom_descripcion_capacidad": "Consulta Externa",
+            "capacidad": "4",
+        },
+        {
+            "c_digo_prestador": "504512253",
+            "c_digo_sede": "123456",
+            "nombre_prestador": "Instituto Oftalmológico",
+            "nom_sede_ips": "Sede Centro",
+            "direcci_n": "Calle 10",
+            "municipio": "MANIZALES",
+            "departamento": "Caldas",
+            "naturaleza": "Privada",
+            "num_nivel_atencion": "2",
+            "nom_grupo_capacidad": "CONSULTORIOS",
+            "nom_descripcion_capacidad": "Procedimientos",
+            "capacidad": "2",
+        },
+    ]
+
+    async def fake_query(params):
+        captured.update(params)
+        return rows
+
+    monkeypatch.setattr(svc, "_query", fake_query)
+
+    result = await svc.execute(
+        {
+            "operation": "list_ips",
+            "filters": {"municipio": "Manizales", "nom_grupo_capacidad": "consultorio"},
+        }
+    )
+
+    assert result["total_establecimientos"] == 1
+    assert len(result["establecimientos"]) == 1
+    assert len(result["establecimientos"][0]["capacidades"]) == 2
+    assert result["establecimientos"][0]["municipio"] == "MANIZALES"
+    assert "c_digo_prestador" not in result["establecimientos"][0]
+    assert "c_digo_sede" not in result["establecimientos"][0]
+    assert "nit_ips" not in result["establecimientos"][0]
+    assert "num_cantidad_capacidad_instalada" not in captured["$group"].split(",")
+    assert captured["$where"] == "municipio='MANIZALES' AND nom_grupo_capacidad='CONSULTORIOS'"
+
+
+async def test_list_ips_acepta_nit_como_filtro_interno(service):
+    svc = service("sum(num_cantidad_capacidad_instalada)", [])
+    captured = {}
+
+    async def fake_query(params):
+        captured.update(params)
+        return []
+
+    svc._query = fake_query
+
+    result = await svc.execute(
+        {"operation": "list_ips", "filters": {"nit_ips": "900.497.151-2"}}
+    )
+
+    assert result["total_establecimientos"] == 0
+    assert captured["$where"] == "nit_ips='900497151'"
 
 
 async def test_operacion_desconocida_no_inventa_datos(service):

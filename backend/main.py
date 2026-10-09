@@ -23,12 +23,24 @@ from backend.schemas.document_schemas import (
     DocumentListResponse,
     DocumentUploadResponse,
 )
-from backend.schemas.router_schemas import IntentTrigger, QueryOperation
+from backend.schemas.router_schemas import (
+    IntentRouterDecision,
+    IntentTrigger,
+    QueryIntentParams,
+    QueryOperation,
+)
 from backend.services.intent_router import intent_router, is_conversational, route_stats
 from backend.services.datosgov_service import (
     CAPACITY_COLUMN,
+    IDENTIFIER_FILTER_COLUMNS,
     OPERATIONS,
     datosgov_service,
+)
+from backend.services.normalization import (
+    DEPARTAMENTO_LOOKUP,
+    DESCRIPCION_CAPACIDAD_LOOKUP,
+    GRUPO_LOOKUP,
+    fold,
 )
 from backend.services.toon_service import toon_compressor
 from backend.services.insights_service import insights_generator
@@ -52,6 +64,24 @@ _DEFAULT_OPERATION_BY_TRIGGER = {
     IntentTrigger.TRIGGER_INSIGHTS: QueryOperation.GROUP_COUNT.value,
     IntentTrigger.TRIGGER_MATH: QueryOperation.MATH.value,
 }
+_FACILITY_TERM_RE = re.compile(
+    r"\b(?:ips|clinica|hospital|centro de salud|centro medico|prestador(?:es)?)\b"
+)
+_FACILITY_SEARCH_RE = re.compile(
+    r"\b(?:cerca|cercan[oa]s?|busca|buscar|busqueda|localiza|localizar|"
+    r"encuentra|encontrar|filtra|filtrar|compara|comparar|lista|listar|"
+    r"recomiend[ae]|opciones|necesito|donde puedo ir|a donde puedo ir|"
+    r"que lugares|donde hay|listame|muestrame|direccion|donde queda)\b"
+)
+_FACILITY_IDENTIFIER_SEARCH_RE = re.compile(
+    r"\b(?:nit|c[oó]digo(?:\s+de\s+prestador)?|nombre\s+de\s+(?:la\s+)?ips)\b",
+    re.IGNORECASE,
+)
+_FACILITY_SEARCH_RE_ACCENTED = re.compile(
+    r"\b(?:d[oó]nde puedo ir|a d[oó]nde puedo ir|"
+    r"recomi[eé]nd(?:a|ame|e)|mu[eé]strame)\b",
+    re.IGNORECASE,
+)
 
 
 @asynccontextmanager
@@ -107,15 +137,270 @@ def _build_query_spec(decision) -> Dict[str, Any]:
         "group_by": params.group_by,
         "math_operation": params.math_operation.value if params.math_operation else None,
         "metric": params.target_metric or CAPACITY_COLUMN,
-        "filters": {k: v for k, v in filters.items() if v},
+        "filters": {
+            **{k: v for k, v in filters.items() if v},
+            **{
+                column: value
+                for column, value in (
+                    ("nit_ips", params.nit_filter),
+                    ("c_digo_prestador", params.codigo_prestador_filter),
+                    ("nombre_prestador", params.nombre_prestador_filter),
+                )
+                if value
+            },
+        },
     }
+
+
+def _is_facility_search_query(query: str) -> bool:
+    folded_query = fold(query)
+    has_facility = bool(_FACILITY_TERM_RE.search(folded_query))
+    has_search_intent = bool(
+        _FACILITY_SEARCH_RE.search(folded_query)
+        or _FACILITY_SEARCH_RE_ACCENTED.search(query)
+        or re.search(r"\bips?\s+en\b", folded_query)
+        or re.search(r"\b(?:que|cuales?)\s+(?:ips|clinica|hospital|sedes?)\b", folded_query)
+        or _FACILITY_IDENTIFIER_SEARCH_RE.search(query)
+    )
+    return has_facility and has_search_intent
+
+
+def _last_user_query(history: str) -> str:
+    user_turns = re.findall(r"(?m)^Usuario:\s*(.+)$", history)
+    return user_turns[-1].strip() if user_turns else ""
+
+
+def _is_facility_follow_up(query: str, history: str) -> bool:
+    is_follow_up = bool(
+        re.search(
+            r"\b(?:cual(?:es)?|otra(?:s)?|esas|estos|estas|compar\w*|"
+            r"tiene mas|cual me queda|alguna de esas|direcciones?|"
+            r"cercan?\w*|mejor(?:es)?)\b",
+            fold(query),
+        )
+    )
+    role_headers = re.findall(r"(?m)^(Usuario|Nexo):", history)
+    last_assistant = history.rsplit("\nNexo:", 1)[-1] if "\nNexo:" in history else ""
+    return (
+        is_follow_up
+        and bool(role_headers)
+        and role_headers[-1] == "Nexo"
+        and "Sedes encontradas" in last_assistant
+        and bool(_last_user_query(history))
+    )
+
+
+def _facility_capacity_filters(query: str) -> Dict[str, str]:
+    folded_query = fold(query)
+    filters: Dict[str, str] = {}
+    for lookup, field in (
+        (DESCRIPCION_CAPACIDAD_LOOKUP, "descripcion_capacidad_filter"),
+        (GRUPO_LOOKUP, "grupo_capacidad_filter"),
+    ):
+        for alias, canonical in sorted(lookup.items(), key=lambda item: len(item[0]), reverse=True):
+            if re.search(rf"(?<!\w){re.escape(alias)}(?!\w)", folded_query):
+                filters[field] = canonical
+                break
+    if re.search(r"\b(publica|publico|estatal|oficial)\b", folded_query):
+        filters["naturaleza_filter"] = "Pública"
+    elif re.search(r"\b(privada|privado|particular)\b", folded_query):
+        filters["naturaleza_filter"] = "Privada"
+    elif re.search(r"\bmixta\b", folded_query):
+        filters["naturaleza_filter"] = "Mixta"
+
+    if re.search(r"\b(nivel\s*1|primari[oa]|basico)\b", folded_query):
+        filters["nivel_atencion_filter"] = "1"
+    elif re.search(r"\b(nivel\s*2|secundari[oa])\b", folded_query):
+        filters["nivel_atencion_filter"] = "2"
+    elif re.search(r"\b(nivel\s*3|terciari[oa]|alto)\b", folded_query):
+        filters["nivel_atencion_filter"] = "3"
+    return filters
+
+
+def _facility_identifier_filters(query: str) -> Dict[str, str]:
+    filters: Dict[str, str] = {}
+    identifier_patterns = (
+        ("nit_ips", r"\bnit(?:\s+de\s+(?:la\s+)?ips)?\s*(?:es|:|#)?\s*([\d.\-\s]{6,})"),
+        (
+            "c_digo_prestador",
+            r"\bc[oó]digo(?:\s+de\s+prestador)?\s*(?:es|:|#)?\s*([\d.\-\s]{6,})",
+        ),
+    )
+    for column, pattern in identifier_patterns:
+        match = re.search(pattern, query, re.IGNORECASE)
+        if match:
+            digits = re.sub(r"\D", "", match.group(1))
+            if digits:
+                filters[column] = digits
+
+    if not filters:
+        name_match = re.search(
+            r"\b(?:ips|prestador)\s+(?:cuyo\s+nombre\s+es\s+|"
+            r"llamad[oa]\s+|con\s+nombre\s+|de\s+nombre\s+)"
+            r"(?:es|:)?\s+(.+?)(?=\s+(?:en|del?|cerca|con|por)\b|$)",
+            query,
+            re.IGNORECASE,
+        ) or re.search(
+            r"\bnombre(?:\s+de\s+(?:la\s+)?(?:ips|prestador))?\s*"
+            r"(?:es|:)?\s+(.+?)(?=\s+(?:en|del?|cerca|con|por)\b|$)",
+            query,
+            re.IGNORECASE,
+        ) or re.search(
+            r"\b(?:ips|prestador|cl[ií]nica|hospital)\s+"
+            r"(?!(?:en|del?|cerca|por|con|que|hay|ofrece|ofrezca)\b)"
+            r"(.+?)(?=\s+(?:en|del?|cerca|con|por)\b|$)",
+            query,
+            re.IGNORECASE,
+        )
+        if name_match:
+            name = name_match.group(1).strip(" \t:,-")
+            if name and fold(name) not in {"cerca", "por nit", "por codigo"}:
+                filters["nombre_prestador"] = name[:160]
+    return filters
+
+
+def _department_mention(query: str) -> Optional[str]:
+    folded_query = fold(query)
+    for alias, canonical in sorted(
+        DEPARTAMENTO_LOOKUP.items(), key=lambda item: len(item[0]), reverse=True
+    ):
+        if re.search(rf"(?<!\w){re.escape(alias)}(?!\w)", folded_query):
+            return canonical
+    return None
+
+
+async def _facility_search_decision(query: str, history: str = ""):
+    try:
+        municipio, departamento, ambiguous = await datosgov_service.resolve_municipio_mention(query)
+    except Exception as exc:
+        logger.exception("No se pudo resolver la ubicación de la búsqueda de IPS: %s", exc)
+        return None, (
+            "No pude consultar el registro público para resolver esa ubicación. "
+            "Inténtalo de nuevo en unos momentos."
+        )
+    if departamento is None:
+        departamento = _department_mention(query)
+
+    if not municipio and not departamento and not ambiguous:
+        previous_query = _last_user_query(history)
+        if previous_query:
+            try:
+                municipio, departamento, ambiguous = (
+                    await datosgov_service.resolve_municipio_mention(previous_query)
+                )
+            except Exception as exc:
+                logger.exception("No se pudo resolver la ubicación recordada de IPS: %s", exc)
+                return None, (
+                    "No pude consultar el registro público para recuperar la ubicación. "
+                    "Inténtalo de nuevo en unos momentos."
+                )
+            if departamento is None:
+                departamento = _department_mention(previous_query)
+
+    if ambiguous:
+        return None, (
+            "Mencionaste más de un municipio o hay nombres repetidos. "
+            "Dime el municipio y, si hace falta, el departamento para ubicar las sedes."
+        )
+    identifier_filters = _facility_identifier_filters(query)
+    if not municipio and not departamento and not identifier_filters:
+        return None, (
+            "¿En qué municipio o departamento de Colombia estás buscando? "
+            "También puedes buscar por nombre, NIT o código. Por ahora puedo "
+            "filtrar por municipio; el dataset no trae coordenadas para calcular "
+            "distancias o radios."
+        )
+
+    schema_filters = {
+        "nit_ips": "nit_filter",
+        "c_digo_prestador": "codigo_prestador_filter",
+        "nombre_prestador": "nombre_prestador_filter",
+    }
+    filters = {
+        schema_filters[column]: value
+        for column, value in identifier_filters.items()
+    }
+    params = QueryIntentParams(
+        operation=QueryOperation.LIST_IPS,
+        municipio_filter=municipio,
+        departamento_filter=departamento,
+        **filters,
+        **_facility_capacity_filters(query),
+    )
+    decision = IntentRouterDecision(
+        trigger=IntentTrigger.TRIGGER_KPIS,
+        confidence_score=1.0,
+        query_intent=params,
+        requires_heavy_path=False,
+        is_safe=True,
+    )
+    return decision, None
 
 
 def _format_fast_path(kpis_result: Dict[str, Any]) -> str:
     """Renderiza el resultado determinista en markdown legible."""
     header = "### ⚡ Datos deterministas verificados (Fast Path)\n\n"
 
-    if kpis_result.get("status") in {"sin_datos", "sin_coincidencias"}:
+    if "establecimientos" in kpis_result:
+        establecimientos = kpis_result["establecimientos"]
+        if not establecimientos:
+            return (
+                f"{header}No encontré sedes que coincidan con esos filtros "
+                "en el registro público consultado. Puedes probar con otro "
+                "municipio o quitar un filtro.\n\n"
+                "Fuente: datos.gov.co (REPS), con corte al 21 de noviembre de 2022."
+            )
+
+        lineas = []
+        for establecimiento in establecimientos:
+            nombre = establecimiento.get("nombre") or "Prestador sin nombre publicado"
+            sede = establecimiento.get("sede")
+            titulo = f"**{nombre}**" + (f" — {sede}" if sede and sede != nombre else "")
+            detalles = []
+            if establecimiento.get("direccion"):
+                detalles.append(establecimiento["direccion"])
+            if establecimiento.get("niveles_atencion"):
+                niveles = ", ".join(map(str, establecimiento["niveles_atencion"]))
+                detalles.append(f"nivel(es) {niveles}")
+            if establecimiento.get("naturaleza"):
+                detalles.append(", ".join(establecimiento["naturaleza"]))
+            capacidades = [
+                f"{item.get('tipo') or item.get('grupo')}: {item.get('cantidad')}"
+                for item in establecimiento.get("capacidades", [])
+                if item.get("cantidad") is not None
+            ]
+            detail_text = " · ".join(detalles)
+            if capacidades:
+                detail_text += (" · " if detail_text else "") + "; ".join(capacidades)
+            lineas.append(f"- {titulo}" + (f"\n  {detail_text}" if detail_text else ""))
+
+        notice = (
+            "\n\nEstas son sedes registradas en REPS; el dataset tiene corte "
+            "al 21 de noviembre de 2022. No confirma que hoy estén abiertas, "
+            "tengan cupos, acepten tu aseguradora o presten cada servicio. "
+            "Confirma directamente antes de desplazarte. La búsqueda por "
+            "«cerca» se limita al municipio indicado: la fuente no incluye coordenadas."
+        )
+        filters = kpis_result.get("filtros_aplicados") or {}
+        if {"nom_grupo_capacidad", "nom_descripcion_capacidad"}.intersection(filters):
+            notice += (
+                "\n\nLas sedes están ordenadas de mayor a menor cantidad "
+                "registrada para la capacidad filtrada; esto no mide calidad "
+                "ni disponibilidad de citas."
+            )
+        if kpis_result.get("resultados_limitados") or kpis_result.get("fuente_registros_limitada"):
+            notice += "\n\nLa lista puede estar limitada; precisa un tipo de atención o capacidad."
+        return (
+            f"{header}**Sedes encontradas ({kpis_result.get('total_establecimientos', len(establecimientos))}):**\n"
+            + "\n".join(lineas)
+            + notice
+        )
+
+    if kpis_result.get("status") in {
+        "sin_datos",
+        "sin_coincidencias",
+        "filtro_ambiguo",
+    }:
         detalle = kpis_result.get("detalle") or "No obtuve datos para esa consulta."
         return f"{header}{detalle}\n\n✅ **Sin cifras inventadas.**"
 
@@ -158,6 +443,16 @@ def _format_fast_path(kpis_result: Dict[str, Any]) -> str:
     )
 
 
+def _safe_query_label(
+    user_query: str, filters: Dict[str, Any], operation: Optional[str] = None
+) -> str:
+    if IDENTIFIER_FILTER_COLUMNS.intersection(filters):
+        if operation == QueryOperation.LIST_IPS.value:
+            return "Búsqueda de sede de IPS por identificador."
+        return "Consulta agregada sobre una IPS específica."
+    return user_query
+
+
 def _to_plain_text(markdown: str) -> str:
     """Quita el marcado markdown para que el TTS de Live no lea asteriscos."""
     text = re.sub(r"^#{1,6}\s*", "", markdown, flags=re.MULTILINE)
@@ -166,6 +461,36 @@ def _to_plain_text(markdown: str) -> str:
     text = re.sub(r"^\s*\d+[.)]\s+", "", text, flags=re.MULTILINE)
     text = text.replace("_", "")
     return re.sub(r"\n{3,}", "\n\n", text).strip()
+
+
+def _empathy_prefix(user_query: str) -> str:
+    """Respond empathetically only to explicit self-reported distress."""
+    query = fold(user_query)
+    if re.search(
+        r"\b(?:no\s+(?:estoy|me siento)\s+(?:muy\s+)?"
+        r"(?:preocupad[oa]|angustiad[oa]|asustad[oa]|frustrad[oa]))\b",
+        query,
+    ):
+        return ""
+    if re.search(
+        r"\b(?:estoy|me siento|me encuentro|tengo)\s+(?:muy\s+)?"
+        r"(?:preocupad[oa]|angustiad[oa]|asustad[oa]|miedo|con miedo)\b|"
+        r"\b(?<!no )me preocupa\b",
+        query,
+    ):
+        return "Entiendo que esta situación puede preocupar. Te ayudo con información clara y sus límites."
+    if re.search(
+        r"\b(?:estoy|me siento|me encuentro)\s+(?:muy\s+)?frustrad[oa]\b|"
+        r"\bno puedo encontrar\b",
+        query,
+    ):
+        return "Entiendo que puede ser frustrante buscar esta información. Vamos paso a paso."
+    return ""
+
+
+def _with_empathy(user_query: str, message: str) -> str:
+    prefix = _empathy_prefix(user_query)
+    return f"{prefix}\n\n{message}" if prefix else message
 
 
 async def _document_response(
@@ -180,12 +505,12 @@ async def _document_response(
         Citation(source=chunk.source, fragmento=chunk.text[:280])
         for chunk, _ in hits[: settings.RAG_TOP_K]
     ]
-    formatted = (
+    formatted = _with_empathy(user_query, (
         "### 📄 Respuesta desde tus documentos (RAG)\n\n"
         f"{answer.respuesta}\n\n"
         "_Fuente: documentos cargados en esta sesión. Las cifras del dataset de IPS "
         "siguen saliendo de datos.gov.co vía SoQL._"
-    )
+    ))
     total_lat_ms = (time.perf_counter() - total_start) * 1000
     await conversation_service.add_turn(session_id, "user", user_query)
     await conversation_service.add_turn(session_id, "assistant", answer.respuesta)
@@ -229,7 +554,34 @@ async def _execute_query(
         )
 
     # --- PASO 1: Router de Intenciones (Fast Path) ---
-    decision, router_lat_ms = await intent_router.route_intent(user_query, history=history_text)
+    facility_search = (
+        _is_facility_search_query(user_query)
+        or _is_facility_follow_up(user_query, history_text)
+    ) and not conversational
+    if facility_search:
+        decision, clarification = await _facility_search_decision(user_query, history_text)
+        router_lat_ms = 0.0
+        if clarification:
+            clarification = _with_empathy(user_query, clarification)
+            await conversation_service.add_turn(session_id, "user", user_query)
+            await conversation_service.add_turn(session_id, "assistant", clarification)
+            return QueryResponse(
+                query=user_query,
+                trigger=IntentTrigger.TRIGGER_CLARIFICATION,
+                formatted_message=clarification,
+                latency=LatencyMetrics(
+                    router_latency_ms=0.0,
+                    datosgov_latency_ms=0.0,
+                    heavy_path_latency_ms=None,
+                    total_pipeline_latency_ms=round(
+                        (time.perf_counter() - total_start) * 1000, 2
+                    ),
+                ),
+                is_safe=True,
+                answer_source="soql",
+            )
+    else:
+        decision, router_lat_ms = await intent_router.route_intent(user_query, history=history_text)
 
     # Verificación de Seguridad, saludos, definiciones y clarificaciones.
     if not decision.is_safe or decision.trigger == IntentTrigger.TRIGGER_CLARIFICATION:
@@ -254,6 +606,7 @@ async def _execute_query(
                 "o «¿Cuántas camas hay en Bogotá D.C?»."
             )
         )
+        mensaje = _with_empathy(user_query, mensaje)
         await conversation_service.add_turn(session_id, "user", user_query)
         await conversation_service.add_turn(session_id, "assistant", mensaje)
         total_lat_ms = (time.perf_counter() - total_start) * 1000
@@ -278,9 +631,19 @@ async def _execute_query(
         spec["operation"] = _DEFAULT_OPERATION_BY_TRIGGER.get(
             decision.trigger, QueryOperation.COUNT_REGISTROS.value
         )
+    safe_query = _safe_query_label(
+        user_query, spec.get("filters") or {}, spec.get("operation")
+    )
 
     datos_start = time.perf_counter()
     kpis_result = await datosgov_service.execute(spec)
+    applied_filters = kpis_result.get("filtros_aplicados")
+    if isinstance(applied_filters, dict):
+        kpis_result["filtros_aplicados"] = {
+            key: value
+            for key, value in applied_filters.items()
+            if key not in IDENTIFIER_FILTER_COLUMNS
+        }
     datos_lat_ms = (time.perf_counter() - datos_start) * 1000
 
     # --- PASO 3 & 4: Evaluación de Ruta (Fast Path vs. Heavy Path) ---
@@ -297,12 +660,12 @@ async def _execute_query(
 
         # Knowledge propio del asistente. Opcional: si falta el archivo,
         # devuelve contexto vacío y el Heavy Path sigue sin directrices.
-        knowledge = await knowledge_service.build_context(user_query)
+        knowledge = await knowledge_service.build_context(safe_query)
 
         doc_context = document_service.render_fragments(doc_hits) if doc_hits else ""
 
         qualitative_insight, heavy_lat_ms = await insights_generator.generate_insight(
-            user_query=user_query,
+            user_query=safe_query,
             kpis=kpis_result,
             toon_context=toon_context,
             knowledge=knowledge,
@@ -328,14 +691,15 @@ async def _execute_query(
         )
     else:
         formatted_message = _format_fast_path(kpis_result)
+    formatted_message = _with_empathy(user_query, formatted_message)
 
     total_lat_ms = (time.perf_counter() - total_start) * 1000
 
-    await conversation_service.add_turn(session_id, "user", user_query)
+    await conversation_service.add_turn(session_id, "user", safe_query)
     await conversation_service.add_turn(session_id, "assistant", formatted_message)
 
     return QueryResponse(
-        query=user_query,
+        query=safe_query,
         trigger=decision.trigger,
         verified_deterministic_kpis=kpis_result,
         qualitative_insight=qualitative_insight,
