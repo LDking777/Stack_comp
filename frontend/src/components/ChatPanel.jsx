@@ -1,8 +1,24 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Send, RotateCcw, X, MessageSquare, Mic, MicOff, Loader2 } from "lucide-react";
+import {
+  Send,
+  RotateCcw,
+  X,
+  Mic,
+  MicOff,
+  Loader2,
+  Upload,
+  FileText,
+  Trash2,
+} from "lucide-react";
 import AnswerCard from "./AnswerCard";
 import Markdown from "./Markdown";
 import { useGeminiLive } from "../hooks/useGeminiLive";
+import {
+  clearConversationHistory,
+  clearSessionMemory,
+  listDocuments,
+  uploadDocument,
+} from "../api";
 
 const GREETING = {
   role: "assistant",
@@ -50,10 +66,36 @@ function ThinkingBubble() {
   );
 }
 
-export default function ChatPanel({ ask, isThinking, pendingQuestion, onPendingHandled }) {
-  const [open, setOpen] = useState(false);
-  const [messages, setMessages] = useState([GREETING]);
+export default function ChatPanel({
+  ask,
+  isThinking,
+  pendingQuestion,
+  onPendingHandled,
+  sessionId,
+  openRequest = 0,
+  embedded = false,
+}) {
+  const [open, setOpen] = useState(embedded);
+  const storageKey = `nexo_chat_history_${sessionId || "anonymous"}`;
+  const [messages, setMessages] = useState(() => {
+    if (typeof window === "undefined") return [GREETING];
+    try {
+      const cached = window.localStorage.getItem(storageKey);
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {
+      /* historia en localStorage no disponible */
+    }
+    return [GREETING];
+  });
   const [input, setInput] = useState("");
+  const [uploadingDocument, setUploadingDocument] = useState(false);
+  const [documents, setDocuments] = useState([]);
+  const [useDocuments, setUseDocuments] = useState(false);
+  const [documentStatusError, setDocumentStatusError] = useState("");
+  const fileInputRef = useRef(null);
   const scrollRef = useRef(null);
   const inputRef = useRef(null);
   const lastQRef = useRef(null);
@@ -82,14 +124,50 @@ export default function ChatPanel({ ask, isThinking, pendingQuestion, onPendingH
   }, [messages, isThinking, live.userText, live.modelText]);
 
   useEffect(() => {
-    if (open) setTimeout(() => inputRef.current?.focus(), 120);
-  }, [open]);
+    if (typeof window !== "undefined") {
+      try {
+        window.localStorage.setItem(storageKey, JSON.stringify(messages.slice(-100)));
+      } catch (error) {
+        console.error("No se pudo guardar el historial local del navegador.", error);
+      }
+    }
+  }, [messages, storageKey]);
+
+  useEffect(() => {
+    let active = true;
+    listDocuments(sessionId)
+      .then((result) => {
+        if (!active) return;
+        const loadedDocuments = result.documentos || [];
+        setDocuments(loadedDocuments);
+        setUseDocuments(loadedDocuments.length > 0);
+      })
+      .catch((error) => {
+        if (active) setDocumentStatusError(error.message);
+      });
+    return () => {
+      active = false;
+    };
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (open && !embedded) setTimeout(() => inputRef.current?.focus(), 120);
+  }, [embedded, open]);
+
+  const handledOpenRequest = useRef(0);
+  useEffect(() => {
+    if (embedded) return;
+    if (openRequest > handledOpenRequest.current) {
+      handledOpenRequest.current = openRequest;
+      setOpen(true);
+    }
+  }, [embedded, openRequest]);
 
   const send = useCallback(async (text) => {
     if (!text?.trim() || isThinking) return;
     setMessages((prev) => [...prev, { role: "user", text }]);
     setInput("");
-    const answer = await ask(text);
+    const answer = await ask(text, { useDocuments });
     setMessages((prev) => [
       ...prev,
       {
@@ -98,13 +176,74 @@ export default function ChatPanel({ ask, isThinking, pendingQuestion, onPendingH
         error: answer.ok ? null : answer.error,
       },
     ]);
-  }, [ask, isThinking]);
+  }, [ask, isThinking, useDocuments]);
 
-  const restart = () => {
+  const restart = async () => {
     lastQRef.current = null;
     setMessages([GREETING]);
     setInput("");
+    if (typeof window !== "undefined") {
+      window.localStorage.removeItem(storageKey);
+    }
+    try {
+      await clearConversationHistory(sessionId);
+      setDocumentStatusError("");
+    } catch (error) {
+      setDocumentStatusError(error.message);
+    }
   };
+
+  const clearSession = async () => {
+    if (!window.confirm("¿Borrar los documentos subidos y la memoria guardada de esta sesión?")) {
+      return;
+    }
+    try {
+      await clearSessionMemory(sessionId);
+      setDocuments([]);
+      setUseDocuments(false);
+      setMessages([GREETING]);
+      window.localStorage.removeItem(storageKey);
+      setDocumentStatusError("");
+    } catch (error) {
+      setDocumentStatusError(error.message);
+    }
+  };
+
+  const handleUploadDocument = useCallback(async (event) => {
+    const file = event.target.files?.[0];
+    if (!file || !sessionId) return;
+
+    setUploadingDocument(true);
+    try {
+      const result = await uploadDocument(sessionId, file);
+      if (!result.ok) {
+        throw new Error(result.error || "El backend no indexó el documento.");
+      }
+      if (result.documento) {
+        setDocuments((previous) => [...previous, result.documento]);
+        setUseDocuments(true);
+      }
+      setDocumentStatusError("");
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          text: `📄 Documento cargado: **${file.name}**. Ya quedó indexado para esta sesión. Puedes preguntarle sobre él y responderé usando esos fragmentos como fuente.\n\n- Archivos en sesión: ${result.documentos_sesion ?? 1}\n- Fragmentos indexados: ${result.total_chunks ?? 0}`,
+        },
+      ]);
+    } catch (error) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          text: `⚠️ No pude cargar el documento. ${error.message || "Revisa el formato y vuelve a intentarlo."}`,
+        },
+      ]);
+    } finally {
+      setUploadingDocument(false);
+      event.target.value = "";
+    }
+  }, [sessionId]);
 
   useEffect(() => {
     if (!pendingQuestion || lastQRef.current === pendingQuestion) return;
@@ -118,21 +257,26 @@ export default function ChatPanel({ ask, isThinking, pendingQuestion, onPendingH
 
   return (
     <>
-      <div className="fixed bottom-6 right-6 z-50">
-        <button 
-          onClick={() => setOpen(!open)} 
-          className="w-14 h-14 rounded-full bg-slate-900 dark:bg-white text-white dark:text-slate-950 flex items-center justify-center shadow-2xl hover:scale-105 active:scale-95 transition-all group relative border-2 border-slate-700/20"
-        >
-          <MessageSquare className="w-6 h-6" />
-          {!open && unreadCount > 0 && (
-            <span className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-rose-500 text-white font-mono font-bold text-[11px] flex items-center justify-center ring-2 ring-white dark:ring-slate-900">
-              {unreadCount}
-            </span>
-          )}
-        </button>
-      </div>
+      {!embedded && (
+        <div className="fixed bottom-6 right-6 z-50">
+          <button
+            onClick={() => setOpen(!open)}
+            className="w-14 h-14 rounded-full bg-slate-900 dark:bg-white text-white dark:text-slate-950 flex items-center justify-center shadow-2xl hover:scale-105 active:scale-95 transition-all group relative border-2 border-slate-700/20"
+            aria-label={open ? "Ocultar chat" : "Abrir chat"}
+          >
+            <span className="text-lg font-bold">N</span>
+            {!open && unreadCount > 0 && (
+              <span className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-rose-500 text-white font-mono font-bold text-[11px] flex items-center justify-center ring-2 ring-white dark:ring-slate-900">
+                {unreadCount}
+              </span>
+            )}
+          </button>
+        </div>
+      )}
 
-      <div className={`fixed bottom-24 right-6 w-96 max-w-[calc(100vw-3rem)] rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl z-50 flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150 ${open ? 'flex' : 'hidden'}`}>
+      <div className={embedded
+        ? "home-chat-panel flex flex-1 min-h-0 flex-col overflow-hidden"
+        : `fixed bottom-24 right-6 w-96 max-w-[calc(100vw-3rem)] rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl z-50 flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150 ${open ? "flex" : "hidden"}`}>
         <div className="p-4 bg-slate-100 dark:bg-slate-800/80 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-lg bg-emerald-500/20 text-emerald-500 flex items-center justify-center font-bold text-xs">
@@ -170,13 +314,29 @@ export default function ChatPanel({ ask, isThinking, pendingQuestion, onPendingH
             <button onClick={restart} className="text-slate-400 hover:text-slate-700 dark:hover:text-white" title="Reiniciar conversación">
               <RotateCcw className="w-4 h-4" />
             </button>
-            <button onClick={() => setOpen(false)} className="text-slate-400 hover:text-slate-700 dark:hover:text-white" title="Cerrar">
-              <X className="w-4 h-4" />
+            <button onClick={clearSession} className="text-slate-400 hover:text-rose-500" title="Borrar documentos y memoria de esta sesión" aria-label="Borrar documentos y memoria de esta sesión">
+              <Trash2 className="w-4 h-4" />
             </button>
+            {!embedded && (
+              <button onClick={() => setOpen(false)} className="text-slate-400 hover:text-slate-700 dark:hover:text-white" title="Cerrar">
+                <X className="w-4 h-4" />
+              </button>
+            )}
           </div>
         </div>
 
-        <div className="p-4 space-y-4 max-h-80 overflow-y-auto text-xs bg-slate-50 dark:bg-slate-900" ref={scrollRef}>
+        <div className={`p-4 space-y-4 overflow-y-auto text-xs bg-slate-50 dark:bg-slate-900 ${embedded ? "flex-1 min-h-0" : "max-h-80"}`} ref={scrollRef}>
+          {documentStatusError && (
+            <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-2 text-[10px] text-amber-700 dark:text-amber-300">
+              {documentStatusError}
+            </div>
+          )}
+          {documents.length > 0 && (
+            <div className="text-[10px] text-slate-500 dark:text-slate-400">
+              {documents.length} documento{documents.length === 1 ? "" : "s"} de salud/IPS indexado{documents.length === 1 ? "" : "s"}.
+              {useDocuments ? " Las consultas usarán estos documentos." : ""}
+            </div>
+          )}
           {messages.map((m, i) => (
             <div key={i} className={`flex gap-2.5 ${m.role === 'user' ? 'flex-row-reverse' : ''}`}>
               {m.role === 'assistant' && (
@@ -214,6 +374,22 @@ export default function ChatPanel({ ask, isThinking, pendingQuestion, onPendingH
         </div>
 
         <div className="p-3 border-t border-slate-200 dark:border-slate-800 flex items-center gap-2 bg-slate-50 dark:bg-slate-900">
+          <label className="cursor-pointer rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-2 text-slate-500 hover:text-slate-700 dark:hover:text-slate-200 transition-colors disabled:opacity-50" title="Subir documento PDF/Word/TXT/MD">
+            <input ref={fileInputRef} type="file" accept=".pdf,.docx,.txt,.md" className="hidden" disabled={uploadingDocument} onChange={handleUploadDocument} />
+            {uploadingDocument ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
+          </label>
+          {documents.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setUseDocuments((enabled) => !enabled)}
+              className={`rounded-lg border p-2 transition-colors ${useDocuments ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" : "border-slate-200 dark:border-slate-700 text-slate-500"}`}
+              title={useDocuments ? "Desactivar respuestas basadas solo en documentos" : "Activar respuestas basadas solo en documentos"}
+              aria-pressed={useDocuments}
+              aria-label={useDocuments ? "Desactivar modo documentos" : "Activar modo documentos"}
+            >
+              <FileText className="w-3.5 h-3.5" />
+            </button>
+          )}
           <input 
             type="text" 
             ref={inputRef}

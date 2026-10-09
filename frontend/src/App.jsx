@@ -1,15 +1,17 @@
 import { useState, useEffect, useCallback } from "react";
-import { getDashboard, askNexo } from "./api";
+import { getDashboard, askNexo, getOrCreateSessionId } from "./api";
 import { useTheme } from "./context/ThemeContext";
 import { toggleSoundEnabled, isSoundEnabled } from "./utils/soundEffects";
 import BIDashboard from "./components/BIDashboard";
 import ChatPanel from "./components/ChatPanel";
+import HomePage from "./pages/HomePage";
 import ToastContainer, { showToast } from "./components/ToastContainer";
-import { Menu, Volume2, VolumeX, Moon, Sun, Database, MapPin } from "lucide-react";
+import { Menu, Volume2, VolumeX, Moon, Sun, Database, MapPin, LayoutDashboard, House } from "lucide-react";
 import "./App.css";
 
 export default function App() {
   const { theme, toggleTheme } = useTheme();
+  const [pathname, setPathname] = useState(window.location.pathname);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -17,6 +19,14 @@ export default function App() {
   const [pendingQ, setPendingQ] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [soundOn, setSoundOn] = useState(isSoundEnabled());
+  const [sessionId] = useState(() => getOrCreateSessionId());
+  const isDashboard = pathname === "/dashboard";
+
+  useEffect(() => {
+    const updatePath = () => setPathname(window.location.pathname);
+    window.addEventListener("popstate", updatePath);
+    return () => window.removeEventListener("popstate", updatePath);
+  }, []);
 
   useEffect(() => {
     if (theme === "dark") {
@@ -38,19 +48,21 @@ export default function App() {
     }
   }, []);
 
-  useEffect(() => { fetchDashboard(); }, [fetchDashboard]);
+  useEffect(() => {
+    if (isDashboard) fetchDashboard();
+  }, [fetchDashboard, isDashboard]);
 
-  const handleAsk = useCallback(async (question) => {
+  const handleAsk = useCallback(async (question, options = {}) => {
     setThinking(true);
     try {
-      const res = await askNexo(question);
+      const res = await askNexo(question, { ...options, sessionId });
       return { ok: true, data: res };
     } catch (err) {
       return { ok: false, error: err.message || "No se pudo consultar." };
     } finally {
       setThinking(false);
     }
-  }, []);
+  }, [sessionId]);
 
   const openChatWith = useCallback((question) => {
     setPendingQ(question ?? "");
@@ -62,7 +74,7 @@ export default function App() {
 
   return (
     <div className="font-sans text-slate-800 dark:text-slate-100 bg-slate-50 dark:bg-[#0c0f14] min-h-screen selection:bg-brand-500 selection:text-white transition-colors duration-200">
-      <header className="sticky top-0 z-40 w-full border-b border-slate-200 dark:border-slate-800/80 bg-white/80 dark:bg-[#0c0f14]/85 backdrop-blur-md transition-all">
+      <header className={`app-header sticky top-0 z-40 w-full border-b border-slate-200 dark:border-slate-800/80 bg-white/80 dark:bg-[#0c0f14]/85 backdrop-blur-md transition-all ${!isDashboard ? "home-header" : ""}`}>
         <div className="px-4 lg:px-6 h-14 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <button onClick={() => setSidebarOpen(!sidebarOpen)} className="lg:hidden p-2 rounded-lg text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800">
@@ -81,14 +93,32 @@ export default function App() {
                 </span>
               </div>
             </div>
+            {!isDashboard && (
+              <span className="home-brand-divider">VOICE INTELLIGENCE</span>
+            )}
           </div>
 
-          <div className="hidden md:flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
-            <MapPin className="w-3.5 h-3.5 text-emerald-500" />
-            <span className="font-medium">Fuente: datos.gov.co · REPS (corte nov 2022)</span>
-          </div>
+          {isDashboard ? (
+            <div className="hidden md:flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+              <MapPin className="w-3.5 h-3.5 text-emerald-500" />
+              <span className="font-medium">Fuente: datos.gov.co · REPS (corte nov 2022)</span>
+            </div>
+          ) : (
+            <span className="home-source-chip"><span className="home-status-dot" /> DATOS PÚBLICOS · REPS</span>
+          )}
 
           <div className="flex items-center gap-2">
+            {isDashboard ? (
+              <a href="/" className="home-nav-button">
+                <House size={15} />
+                <span>Inicio</span>
+              </a>
+            ) : (
+              <a href="/dashboard" className="home-nav-button">
+                <LayoutDashboard size={15} />
+                <span>Dashboard</span>
+              </a>
+            )}
             <button onClick={handleSoundToggle} title="Activar/Desactivar micro-sonidos" className="p-2 rounded-lg text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 dark:text-slate-400 transition-colors">
               {soundOn ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
             </button>
@@ -107,24 +137,40 @@ export default function App() {
         </div>
       </header>
 
-      <div className="min-h-[calc(100vh-3.5rem)] flex relative">
-        <BIDashboard
-          data={data}
-          loading={loading}
-          error={error}
-          onRetry={fetchDashboard}
-          onInspect={openChatWith}
-          sidebarOpen={sidebarOpen}
-          setSidebarOpen={setSidebarOpen}
-        />
-      </div>
+      {isDashboard ? (
+        <div className="min-h-[calc(100vh-3.5rem)] flex relative">
+          <BIDashboard
+            data={data}
+            loading={loading}
+            error={error}
+            onRetry={fetchDashboard}
+            onInspect={openChatWith}
+            sidebarOpen={sidebarOpen}
+            setSidebarOpen={setSidebarOpen}
+          />
+        </div>
+      ) : (
+        <HomePage>
+          <ChatPanel
+            embedded
+            ask={handleAsk}
+            isThinking={thinking}
+            pendingQuestion={pendingQ}
+            onPendingHandled={() => setPendingQ(null)}
+            sessionId={sessionId}
+          />
+        </HomePage>
+      )}
 
-      <ChatPanel
-        ask={handleAsk}
-        isThinking={thinking}
-        pendingQuestion={pendingQ}
-        onPendingHandled={() => setPendingQ(null)}
-      />
+      {isDashboard && (
+        <ChatPanel
+          ask={handleAsk}
+          isThinking={thinking}
+          pendingQuestion={pendingQ}
+          onPendingHandled={() => setPendingQ(null)}
+          sessionId={sessionId}
+        />
+      )}
 
       <ToastContainer />
     </div>

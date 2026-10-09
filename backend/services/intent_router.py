@@ -325,9 +325,13 @@ class FastPathIntentRouter:
     con salida estructurada validada por Pydantic v2.
     """
 
-    async def route_intent(self, user_query: str) -> tuple[IntentRouterDecision, float]:
+    async def route_intent(self, user_query: str, history: str = "") -> tuple[IntentRouterDecision, float]:
         """
         Clasifica la intención del usuario y devuelve la decisión tipada junto con la latencia en ms.
+
+        `history` es el historial reciente de la conversación (texto plano). Si
+        viene, se añade al contexto para resolver seguimientos ("¿y en Bogotá?");
+        si está vacío, el comportamiento es idéntico al original.
         """
         start_time = time.perf_counter()
 
@@ -391,9 +395,17 @@ class FastPathIntentRouter:
             return self._heuristic_fallback(user_query), latency_ms
 
         try:
+            user_content = f"Consulta del usuario: {user_query}"
+            if history:
+                user_content = (
+                    f"Historial reciente de la conversación:\n{history}\n\n"
+                    f"{user_content}\n\n"
+                    "(Usa el historial solo para resolver referencias como «eso», "
+                    "«allá» o «y en ...?». La consulta a clasificar es la última.)"
+                )
             decision, latency_ms = await llm_client.structured(
                 system_prompt=ROUTER_SYSTEM_PROMPT,
-                user_content=f"Consulta del usuario: {user_query}",
+                user_content=user_content,
                 response_model=IntentRouterDecision,
                 model=llm_client.router_model(),
                 temperature=0.0,
@@ -569,3 +581,13 @@ class FastPathIntentRouter:
         )
 
 intent_router = FastPathIntentRouter()
+
+
+def is_conversational(query: str) -> bool:
+    """
+    True si la consulta es saludo/capacidades o una definición.
+
+    Lo usa la orquestación para no responder saludos desde los documentos
+    subidos (RAG), aunque haya un PDF cargado.
+    """
+    return _small_talk_reply(query) is not None or _definition_reply(query) is not None

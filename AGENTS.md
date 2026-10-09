@@ -24,9 +24,9 @@ Si alguna vez modificas este diseño, cualquier ruta que haga que el modelo esti
 
 Los cálculos deterministas y la síntesis cualitativa son capas separadas. El router decide cuál se ejecuta; no se mezclan los resultados.
 
-### Tercer invariante: la fuente es externa y de solo lectura
+### Tercer invariante: la fuente analítica es externa y de solo lectura
 
-No hay base de datos propia ni Supabase. Toda la agregación ocurre en `https://www.datos.gov.co/resource/s2ru-bqt6.json`. La fuente está congelada desde `2022-11-21` (REPS), por eso el cache en memoria del servicio es seguro.
+La agregación del dataset de IPS ocurre en `https://www.datos.gov.co/resource/s2ru-bqt6.json`. Supabase no almacena ni calcula esos KPIs: se usa únicamente para persistir sesiones, turnos de chat, documentos cargados, archivos originales privados y embeddings de RAG. La fuente analítica está congelada desde `2022-11-21` (REPS), por eso el cache en memoria de datos.gov.co es seguro.
 
 ---
 
@@ -54,22 +54,29 @@ api-service-v2/
 │       ├── knowledge_service.py# Directrices desde backend/data/knowledge_ips.json
 │       ├── llm_client.py       # Abstracción Gemini/OpenAI/Groq + adaptación de esquemas
 │       ├── normalization.py    # Departamentos, naturaleza, nivel, grupo de capacidad
+│       ├── conversation_service.py # Historial persistente de chat por sesión
+│       ├── document_service.py # Extracción, filtro de dominio y RAG de documentos
+│       ├── embeddings_service.py # Vectores Gemini para búsqueda semántica
+│       ├── supabase_service.py # PostgREST + Storage con service_role solo backend
 │       └── live_token_service.py # Credenciales efímeras para Gemini Live (voz)
 ├── frontend/                   # React + Vite (desplegado en Vercel)
+│   ├── public/avatar.jpg       # Avatar de la portada del agente
 │   └── src/
-│       ├── App.jsx             # Topbar + tablero + burbuja de chat
+│       ├── App.jsx             # Rutas / (portada) y /dashboard + estado global
 │       ├── api.js              # Cliente HTTP; API_BASE recorta el "/" final
+│       ├── pages/HomePage.jsx  # Portada con avatar cuadrado y chat persistente
 │       ├── hooks/
 │       │   └── useGeminiLive.js# Voz bidireccional (Gemini Live) + tool al pipeline
 │       ├── utils/pcmAudio.js   # PCM 16 kHz (in) / 24 kHz (out) vía Web Audio
 │       └── components/
 │           ├── BIDashboard.jsx # KPIs, desgloses por departamento/naturaleza/capacidad
-│           ├── ChatPanel.jsx   # Burbuja flotante NEXO IA
+│           ├── ChatPanel.jsx   # Chat embebido en portada y flotante en dashboard
 │           ├── Markdown.jsx    # Render mínimo de markdown para respuestas del bot
 │           └── AnswerCard.jsx  # Render de respuestas estructuradas
 ├── tests/                      # pytest (pytest.ini: testpaths=tests)
 ├── render.yaml                 # Blueprint de Render: rootDir, build, start, envVars
 ├── requirements.txt            # Dependencias del backend (fuente única)
+├── supabase_mvp.sql            # Esquema pegable en Supabase SQL Editor
 ├── pytest.ini                  # Configuración de pruebas
 ├── README.md                   # Arranque local y despliegue
 ├── opencode.json               # Config de opencode
@@ -78,7 +85,7 @@ api-service-v2/
 └── .env                        # Secretos locales. Gitignored. Nunca commitear
 ```
 
-No existe `legacy/`, `docs/` ni `supabase/`. El v1 Flask y las migraciones de Supabase fueron **eliminados** (su código sigue en el historial de git).
+No existe una carpeta `supabase/` ni se usa Supabase como fuente de KPIs. El script `supabase_mvp.sql` en la raíz crea las tablas de memoria/RAG y el bucket privado. El v1 Flask y sus migraciones anteriores fueron eliminados (su código sigue en el historial de git).
 
 ---
 
@@ -181,12 +188,13 @@ Estas cosas fallan **en silencio**. Un cambio puede romper el sistema sin que ni
 8. **`VITE_API_URL` con barra final.** `api.js` concatena `...onrender.com/` + `/api/v1/...` = `//api/v1/...`, que Starlette no matchea: 404 `{"detail":"Not Found"}`. `API_BASE` ya recorta barras, pero el valor limpio sigue siendo el correcto. Además Vite inyecta `VITE_*` **en el build**: cambiar la variable sin redeployar no hace nada.
 9. **Deploy sin push.** Vercel y Render despliegan lo que hay en `Stack_comp`, no tu disco. Un commit local no despliega nada; la verificación es ver el bundle/nombre del asset cambiado, no asumir.
 10. **`sum_capacity` sin `group_by` es un total.** En `datosgov_service.execute()`, `sum_capacity` con `group_by` devuelve desglose + `total_capacidad`; sin `group_by` devuelve solo `total_capacidad` (escalar). No es un error.
+11. **Memoria/RAG requieren Supabase configurado.** Ejecuta `supabase_mvp.sql` y configura `SUPABASE_URL` + `SUPABASE_SECRET_KEY` (o `SUPABASE_SERVICE_ROLE_KEY` legado) solo en el backend. La clave secreta nunca va en Vite. Sin configuración, `/api/v1/health` queda `degraded` y las operaciones con sesión responden 503; no hay fallback silencioso a RAM. El SQL no altera `storage.objects` ni sus políticas: es una tabla gestionada por Supabase; el bucket propio se crea privado y el backend accede con la clave de servidor.
 
 ---
 
 ## 7. Estado actual y pendientes
 
-Al día de hoy el sistema corre sobre **datos.gov.co** (Socrata/SoQL); Supabase fue eliminado por completo.
+Los KPIs siguen viniendo exclusivamente de **datos.gov.co** (Socrata/SoQL). Supabase se usa solo para sesión/memoria y documentos, no para la analítica de IPS.
 
 - **Router, Heavy Path, tablero y chat funcionando** con **Groq** (`LLM_PROVIDER=groq`, modelo `openai/gpt-oss-120b` en ambas etapas). Groq es el proveedor activo por decisión: Gemini se descartó por no ofrecer capa gratuita y OpenAI está sin créditos (`429 insufficient_quota`).
 - **Fuente de datos**: dataset `s2ru-bqt6` (41.427 registros, corte `2022-11-21`, ~1.027 municipios). Agregaciones en vivo vía SoQL.
@@ -194,6 +202,8 @@ Al día de hoy el sistema corre sobre **datos.gov.co** (Socrata/SoQL); Supabase 
 - **Knowledge local** del asistente con 8 directrices (capacidad, cobertura, gestión, calidad de datos). Si falta el archivo, el Heavy Path sigue sin directrices.
 - **Preguntas de definición/fuera de dominio con guía.** `intent_router.py` resuelve "¿qué es una IPS?" con un glosario determinista (`_definition_reply`, sin LLM), saludos y capacidades (`_small_talk_reply`) y listados (`_list_intent`).
 - **UI**: tema claro/oscuro persistido (`ThemeContext`) y acento emerald. El chat se llama **NEXO IA**.
+- **Rutas principales**: `/` es la portada con el avatar cuadrado grande a la izquierda y el chat persistente a la derecha; en escritorio el avatar escala por ancho y altura disponibles, y en móvil compacto mantiene más espacio visual sin desbordar el encabezado. Tablet/móvil mantiene scroll natural si el contenido excede el alto. `/dashboard` conserva el tablero analítico anterior y el chat flotante. El header permite navegar entre ambas. El usuario inicia el micrófono explícitamente desde el control de voz.
+- **Memoria y documentos por sesión**: `supabase_mvp.sql` crea tablas con RLS, búsqueda pgvector y bucket privado. El backend persiste historial, fragmentos, embeddings y archivo original; el frontend conserva el `session_id` y el historial visible local. Embeddings con Gemini y el prompt RAG limitan documentos/preguntas al dominio IPS/salud de Colombia. Requiere ejecutar el SQL y configurar `SUPABASE_URL`, `SUPABASE_SECRET_KEY` (o `SUPABASE_SERVICE_ROLE_KEY`) y `GEMINI_API_KEY` en el backend. La conexión real de DB, búsqueda y limpieza se probó el 2026-10-09 con contenido sintético temporal.
 - **Voz con Gemini Live.** El backend mintea credenciales efímeras (`POST /api/v1/live/token`, la `GEMINI_API_KEY` no sale del server) y el navegador conversa por WebSocket (`gemini-3.8-live`). Las preguntas con cifras disparan la herramienta `consultar_ips` → `POST /api/v1/live/tool` → mismo pipeline SoQL. El chat de texto sigue intacto; la transcripción se asigna por turno (sin diarización). **Conexión real verificada** (2026-10-09): token efímero + sesión WebSocket contra `gemini-3.8-live` responden OK.
 
 Pendientes, en orden de impacto:
@@ -222,7 +232,7 @@ Configuración real del servicio en Render (hoy en el dashboard, no sincronizada
 - **Build Command:** `pip install -r requirements.txt`
 - **Start Command:** `uvicorn backend.main:app --host 0.0.0.0 --port $PORT`
 - **Health Check Path:** `/api/v1/health`
-- **Variables:** `LLM_PROVIDER=groq`, modelos Groq y `GROQ_API_KEY` (secretos a mano en el dashboard). Ya no hay variables de Supabase. Para la voz: `GEMINI_API_KEY` (secret, solo backend) y opcional `GEMINI_LIVE_MODEL` (por defecto `gemini-3.8-live`).
+- **Variables:** `LLM_PROVIDER=groq`, modelos Groq y `GROQ_API_KEY` (secretos a mano en el dashboard). Para memoria/RAG: `SUPABASE_URL`, `SUPABASE_SECRET_KEY` (o la legacy `SUPABASE_SERVICE_ROLE_KEY`) y `GEMINI_API_KEY` (solo backend; nunca `VITE_*`). Para la voz: opcional `GEMINI_LIVE_MODEL` (por defecto `gemini-3.8-live`).
 
 En Vercel: `VITE_API_URL=https://stack-comp.onrender.com` sin `/` final, y todo cambio de variable exige redeploy (ver trampa 8).
 
