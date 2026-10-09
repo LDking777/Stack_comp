@@ -34,12 +34,16 @@ class HeavyPathInsightsGenerator:
         kpis: Dict[str, Any], 
         toon_context: str,
         knowledge: Optional[KnowledgeContext] = None,
+        history: str = "",
+        document_context: str = "",
     ) -> tuple[QualitativeInsightResponse, float]:
         """
         Genera la síntesis narrativa combinando los KPIs deterministas con el contexto TOON.
 
         `knowledge` es opcional: si viene vacío, el prompt se construye igual
-        sin el bloque de directrices.
+        sin el bloque de directrices. `history` y `document_context` también son
+        opcionales: añaden conversación previa y fragmentos de documentos
+        subidos (RAG) como contexto adicional, sin tocar los KPIs.
         """
         start_time = time.perf_counter()
 
@@ -62,6 +66,19 @@ class HeavyPathInsightsGenerator:
             f"=== 2. CONTEXTO OPERACIONAL COMPRIMIDO (TOON NOTATION) ===\n"
             f"{toon_context}\n"
         )
+
+        if history:
+            user_content += (
+                f"\n=== 3. CONVERSACIÓN PREVIA (referencia para el seguimiento) ===\n"
+                f"{history}\n"
+            )
+
+        if document_context:
+            user_content += (
+                f"\n=== 4. FRAGMENTOS DE DOCUMENTOS SUBIDOS POR EL USUARIO ===\n"
+                f"{document_context}\n"
+                "(Puedes comentarlos, pero las cifras del dataset siguen siendo las de la sección 1.)\n"
+            )
 
         # El knowledge va en el prompt, nunca en el response_schema: así el
         # modelo puede leerlo pero no está obligado a devolverlo, y no puede

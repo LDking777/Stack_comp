@@ -1,7 +1,8 @@
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from pydantic import BaseModel, Field
 from backend.schemas.router_schemas import IntentTrigger
 from backend.schemas.insight_schemas import QualitativeInsightResponse
+from backend.schemas.document_schemas import Citation
 
 class QueryRequest(BaseModel):
     query: str = Field(
@@ -9,6 +10,16 @@ class QueryRequest(BaseModel):
         min_length=1, 
         max_length=1000, 
         description="Consulta enviada por el usuario desde el frontend React"
+    )
+    session_id: Optional[str] = Field(
+        default=None,
+        max_length=64,
+        pattern=r"^[A-Za-z0-9_-]{1,64}$",
+        description="Identificador de la conversación; habilita memoria multi-turno y RAG de documentos.",
+    )
+    use_documents: bool = Field(
+        default=False,
+        description="Fuerza responder desde los documentos subidos (si no, se decide por intención).",
     )
 
 class LatencyMetrics(BaseModel):
@@ -56,3 +67,11 @@ class QueryResponse(BaseModel):
     )
     latency: LatencyMetrics
     is_safe: bool = True
+    answer_source: Optional[str] = Field(
+        default=None,
+        description="Origen de la respuesta: 'soql' (datos.gov.co), 'documents' (RAG) o 'mixed'.",
+    )
+    citations: Optional[List[Citation]] = Field(
+        default=None,
+        description="Fragmentos de documentos usados como evidencia (solo RAG).",
+    )
