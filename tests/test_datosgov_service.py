@@ -1,0 +1,190 @@
+"""
+Pruebas de la capa de datos (datos.gov.co / SoQL).
+
+No llaman a la red: se dobla `DatosGovService._query`, que es el único punto
+que habla con la API pública. Lo que importa aquí es que cada operación
+determinista arme bien el `$select`/`$where` y traduzca la respuesta.
+"""
+
+import pytest
+
+from backend.services import datosgov_service as datosgov_module
+from backend.services.datosgov_service import (
+    DatosGovService,
+    _parse_number,
+    build_where,
+    normalize_filters,
+)
+
+
+@pytest.fixture(autouse=True)
+def _limpiar_cache():
+    """Los caches de módulo son globales: sin limpiarlos, un test contamina otro."""
+    datosgov_module._CACHE.clear()
+    datosgov_module._MUNICIPIOS.clear()
+    datosgov_module._MUNICIPIOS_TS = 0.0
+    yield
+    datosgov_module._CACHE.clear()
+
+
+# ============================================================
+# HELPERS PUROS
+# ============================================================
+
+def test_build_where_escapa_comillas():
+    where = build_where({"departamento": "O'Higgins"})
+    assert where == "departamento='O''Higgins'"
+
+
+def test_build_where_ignora_vacios():
+    assert build_where({"departamento": None, "municipio": "  "}) == ""
+    assert build_where({"departamento": "Antioquia", "municipio": None}) == "departamento='Antioquia'"
+
+
+def test_normalize_filters_canoniza_al_valor_del_dataset():
+    normalized = normalize_filters(
+        {
+            "departamento": "bogota",
+            "naturaleza": "publica",
+            "num_nivel_atencion": "nivel 3",
+            "nom_grupo_capacidad": "camas",
+        }
+    )
+
+    assert normalized["departamento"] == "Bogotá D.C"
+    assert normalized["naturaleza"] == "Pública"
+    assert normalized["num_nivel_atencion"] == "3"
+    assert normalized["nom_grupo_capacidad"] == "CAMAS"
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [("97036", 97036), ("1.5", 1.5), ("2.0", 2), (None, None), ("", 0), (5, 5)],
+)
+def test_parse_number(raw, expected):
+    assert _parse_number(raw) == expected
+
+
+# ============================================================
+# OPERACIONES (con _query doblado)
+# ============================================================
+
+@pytest.fixture
+def service(monkeypatch):
+    """Servicio con `_query` doblado por una respuesta por caso de prueba."""
+    svc = DatosGovService()
+    respuestas = {}
+
+    async def fake_query(params):
+        # Empareja por el `$select` para no depender del orden de las llamadas.
+        select = params.get("$select", "")
+        for fragmento, rows in respuestas.items():
+            if fragmento in select:
+                return rows
+        return []
+
+    monkeypatch.setattr(svc, "_query", fake_query)
+
+    def _set(fragmento, rows):
+        respuestas[fragmento] = rows
+        return svc
+
+    return _set
+
+
+async def test_count_registros(service):
+    svc = service("count(*)", [{"count": "41427"}])
+
+    result = await svc.execute({"operation": "count_registros"})
+
+    assert result["total_registros"] == 41427
+    assert result["modo"] == "agregacion_determinista_socrata"
+
+
+async def test_count_prestadores(service):
+    svc = service("count(distinct", [{"count_c_digo_prestador": "9320"}])
+
+    result = await svc.execute({"operation": "count_prestadores"})
+
+    assert result["total_prestadores"] == 9320
+
+
+async def test_group_count(service):
+    svc = service("naturaleza,count(*)", [
+        {"naturaleza": "Privada", "count": "25067"},
+        {"naturaleza": "Pública", "count": "16174"},
+    ])
+
+    result = await svc.execute({"operation": "group_count", "group_by": "naturaleza"})
+
+    assert result["grupo_por"] == "naturaleza"
+    assert result["grupos"] == [
+        {"valor": "Privada", "registros": 25067},
+        {"valor": "Pública", "registros": 16174},
+    ]
+
+
+async def test_group_count_sin_group_by_falla_honestamente(service):
+    svc = service("count(*)", [{"count": "1"}])
+
+    result = await svc.execute({"operation": "group_count"})
+
+    assert result["status"] == "sin_datos"
+    assert result["error"] == "falta_group_by"
+
+
+async def test_sum_capacity_sin_group_by_es_escalar(service):
+    svc = service("sum(", [{"sum_num_cantidad_capacidad_instalada": "97036"}])
+
+    result = await svc.execute(
+        {"operation": "sum_capacity", "filters": {"nom_grupo_capacidad": "CAMAS"}}
+    )
+
+    assert result["total_capacidad"] == 97036
+    assert result["filtros_aplicados"]["nom_grupo_capacidad"] == "CAMAS"
+
+
+async def test_math_avg(service):
+    svc = service("avg(", [{"avg_num_cantidad_capacidad_instalada": "5.3"}])
+
+    result = await svc.execute({"operation": "math", "math_operation": "avg"})
+
+    assert result["operacion"] == "avg"
+    assert result["valor"] == 5.3
+
+
+async def test_list_distinct_ordena_por_conteo(service):
+    svc = service("count(*)", [
+        {"departamento": "Antioquia", "count": "4245"},
+        {"departamento": "Bogotá D.C", "count": "4647"},
+    ])
+
+    result = await svc.execute({"operation": "list_distinct", "group_by": "departamento"})
+
+    assert result["categoria"] == "departamento"
+    assert result["total_valores"] == 2
+    assert result["valores_distintos"].startswith("Bogotá D.C (4647)")
+
+
+async def test_operacion_desconocida_no_inventa_datos(service):
+    svc = service("count(*)", [{"count": "1"}])
+
+    result = await svc.execute({"operation": "no_existe"})
+
+    assert result["status"] == "sin_datos"
+    assert "operacion_desconocida" in result["error"]
+
+
+async def test_sin_datos_marca_error_sin_alucinar(service):
+    """Un fallo de red no se rellena con el LLM: se devuelve sin_datos."""
+    svc = DatosGovService()
+
+    async def boom(_params):
+        raise RuntimeError("timeout")
+
+    svc._query = boom
+
+    result = await svc.execute({"operation": "count_registros"})
+
+    assert result["status"] == "sin_datos"
+    assert "fuente_publica_no_disponible" in result["error"]

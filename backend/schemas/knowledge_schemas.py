@@ -1,12 +1,13 @@
 """
-Contratos del knowledge de auditoría parametrizable.
+Contratos del knowledge de auditoria del asistente de IPS.
 
-La fuente de verdad es la tabla `knowledge_auditoria` en Supabase. Este modulo
-solo define el contrato de lo que entra por la API de REST.
+La fuente de verdad es el archivo local `backend/data/knowledge_ips.json`
+(conjunto de directrices propio del asistente). Este modulo solo define el
+contrato de lo que se lee del archivo.
 
-Diferencia crítica con la v1: aquí no existe el concepto de "respuesta fija".
-Una entrada aporta una `directriz` de análisis, nunca el texto que el usuario
-recibirá. El LLM sigue siendo quien narra; el knowledge solo acota el análisis.
+No existe el concepto de "respuesta fija": una entrada aporta una `directriz`
+de analisis, nunca el texto que el usuario recibira. El LLM sigue siendo quien
+narra; el knowledge solo acota el analisis.
 """
 
 from enum import Enum
@@ -17,22 +18,21 @@ from pydantic import BaseModel, Field
 
 class KnowledgeCategory(str, Enum):
     """
-    Categorías de auditoría. El backend puede pedir solo las categorías que
-    interesan a una consulta en vez de inyectar el catálogo completo.
+    Categorias de auditoria. El backend puede pedir solo las categorias que
+    interesan a una consulta en vez de inyectar el catalogo completo.
     """
 
     GENERAL = "general"
-    FRICCION = "friccion"
-    ENGAGEMENT = "engagement"
-    DISPOSITIVO = "dispositivo"
-    MERCADO = "mercado"
-    COMPORTAMIENTO = "comportamiento"
+    COBERTURA = "cobertura"
+    CAPACIDAD = "capacidad"
+    GESTION = "gestion"
+    CALIDAD_DATOS = "calidad_datos"
 
 
 class KnowledgeEntry(BaseModel):
-    """Una entrada del knowledge de auditoría, ya normalizada."""
+    """Una entrada del knowledge de auditoria, ya normalizada."""
 
-    id: int = Field(description="Identificador de la entrada en Supabase")
+    id: int = Field(description="Identificador de la entrada en el archivo de knowledge")
     trigger_key: str = Field(
         description="Ancla de coincidencia, en minúsculas y sin acentos"
     )
@@ -40,9 +40,9 @@ class KnowledgeEntry(BaseModel):
         default=KnowledgeCategory.GENERAL,
         description="Categoría de auditoría de la entrada",
     )
-    mercado: str = Field(
+    ambito: str = Field(
         default="GLOBAL",
-        description="Ámbito de mercado. 'GLOBAL' aplica a cualquier mercado.",
+        description="Ambito geografico de la entrada (departamento). 'GLOBAL' aplica a cualquier consulta.",
     )
     directriz: str = Field(
         description="Qué debe hacer el modelo al aplicar esta entrada. Nunca es la respuesta final."

@@ -11,11 +11,11 @@ import logging
 import pytest
 
 from backend.config import settings
-from backend.schemas.router_schemas import IntentRouterDecision, IntentTrigger
+from backend.schemas.router_schemas import IntentTrigger, QueryOperation
 from backend.services.llm_client import describe_error, inline_refs
 from backend.services.intent_router import intent_router, route_stats
 
-from tests.conftest import FALLBACK_CONFIDENCES, FakeLLM
+from tests.conftest import FALLBACK_CONFIDENCES, FakeLLM, make_decision
 
 
 # ============================================================
@@ -24,15 +24,14 @@ from tests.conftest import FALLBACK_CONFIDENCES, FakeLLM
 
 def test_router_timeout_no_es_marginal():
     """
-    `gemini-2.5-flash` con thinking habilitado tarda entre 1.5s y >20s.
-    Con el timeout anterior de 15s el router caia al fallback de forma
-    intermitente y la respuesta parecia correcta. Este test falla si alguien
+    Un timeout corto hace que el router caiga al fallback de forma
+    intermitente y la respuesta parezca correcta. Este test falla si alguien
     vuelve a bajar el timeout.
     """
     assert settings.ROUTER_TIMEOUT_S >= 30.0, (
-        f"ROUTER_TIMEOUT_S={settings.ROUTER_TIMEOUT_S}s es demasiado corto para "
-        "gemini-2.5-flash. Con menos de 30s el router cae al fallback y la "
-        "respuesta parece correcta mientras el LLM nunca se consulto."
+        f"ROUTER_TIMEOUT_S={settings.ROUTER_TIMEOUT_S}s es demasiado corto: "
+        "el router cae al fallback y la respuesta parece correcta mientras el "
+        "LLM nunca se consulto."
     )
 
 
@@ -46,10 +45,6 @@ def test_insights_timeout_supera_al_del_router():
 # ============================================================
 
 def test_describe_error_no_devuelve_cadena_vacia(timeout_error):
-    """
-    `str(asyncio.TimeoutError())` es ''. Con un log de solo `{e}` se imprimia
-    'Error en el Intent Router (gemini):' sin explicar nada.
-    """
     rendered = describe_error(timeout_error)
     assert rendered.strip(), "describe_error no debe devolver cadena vacia"
     assert "TimeoutError" in rendered
@@ -68,7 +63,7 @@ def test_describe_error_conserva_tipo_y_detalle():
 async def test_timeout_se_registra_como_motivo(patch_llm, timeout_error):
     fake = patch_llm(FakeLLM(error=timeout_error))
 
-    await intent_router.route_intent("Analiza Mexico")
+    await intent_router.route_intent("Analiza las IPS de Antioquia")
 
     assert fake.calls == 1, "el LLM debe intentar llamarse"
     stats = route_stats()
@@ -78,21 +73,9 @@ async def test_timeout_se_registra_como_motivo(patch_llm, timeout_error):
 
 
 async def test_llm_exitoso_no_contabiliza_fallback(patch_llm):
-    fake = patch_llm(
-        FakeLLM(
-            result=(
-                IntentRouterDecision(
-                    trigger=IntentTrigger.TRIGGER_KPIS,
-                    confidence_score=0.94,
-                    rpc_intent={"rpc_name": "rpc_get_marketing_kpis"},
-                    requires_heavy_path=False,
-                ),
-                12.3,
-            )
-        )
-    )
+    fake = patch_llm(FakeLLM(result=(make_decision(confidence=0.94), 12.3)))
 
-    decision, latency = await intent_router.route_intent("Cuantos usuarios hay")
+    decision, latency = await intent_router.route_intent("Cuantas IPS hay en Caldas")
 
     assert fake.calls == 1
     assert decision.confidence_score == 0.94
@@ -104,10 +87,10 @@ async def test_llm_exitoso_no_contabiliza_fallback(patch_llm):
 
 
 async def test_llm_no_disponible_se_registra(patch_llm, caplog):
-    patch_llm(FakeLLM(available=False, init_error="GEMINI_API_KEY ausente"))
+    patch_llm(FakeLLM(available=False, init_error="GROQ_API_KEY ausente"))
 
     with caplog.at_level(logging.ERROR):
-        await intent_router.route_intent("Analiza Mexico")
+        await intent_router.route_intent("Analiza las IPS de Antioquia")
 
     # Antes esta rama no logueaba nada: era 100% silenciosa.
     assert any("no disponible" in r.message for r in caplog.records)
@@ -119,7 +102,7 @@ async def test_timeout_reporta_el_presupuesto_configurado(patch_llm, timeout_err
     patch_llm(FakeLLM(error=timeout_error))
 
     with caplog.at_level(logging.ERROR):
-        await intent_router.route_intent("Analiza Mexico")
+        await intent_router.route_intent("Analiza las IPS de Antioquia")
 
     messages = [r.message for r in caplog.records]
     assert any(f"timeout={settings.ROUTER_TIMEOUT_S}s" in m for m in messages)
@@ -149,6 +132,8 @@ def test_inline_refs_elimina_palabras_clave_rechazadas():
     Gemini rechaza `$defs`, `title`, `additionalProperties`, `minimum`, etc.
     con 'Unknown field for Schema' (AGENTS.md, trampa 3).
     """
+    from backend.schemas.router_schemas import IntentRouterDecision
+
     serialized = json.dumps(inline_refs(IntentRouterDecision.model_json_schema()))
 
     for forbidden in ('"$defs"', '"$ref"', '"title"', '"additionalProperties"'):
@@ -157,6 +142,8 @@ def test_inline_refs_elimina_palabras_clave_rechazadas():
 
 def test_inline_refs_conserva_los_enums():
     """Sin enums, el LLM podria inventar un trigger inexistente."""
+    from backend.schemas.router_schemas import IntentRouterDecision
+
     triggers = inline_refs(IntentRouterDecision.model_json_schema())["properties"]["trigger"]
 
     assert "enum" in triggers, "el trigger debe seguir siendo un enum tras inline_refs"
@@ -164,35 +151,77 @@ def test_inline_refs_conserva_los_enums():
 
 
 def test_inline_refs_es_idempotente():
+    from backend.schemas.router_schemas import IntentRouterDecision
+
     schema = IntentRouterDecision.model_json_schema()
     assert inline_refs(inline_refs(schema)) == inline_refs(schema)
 
 
 # ============================================================
-# 6. NORMALIZACION — el LLM devuelve 'México', la BD guarda otra cosa
+# 6. NORMALIZACION — el LLM devuelve 'bogota', la BD guarda 'Bogotá D.C'
 # ============================================================
 
-@pytest.mark.parametrize("country", ["México", "Mexico", "COLOMBIA"])
-async def test_canonicalize_normaliza_pais(patch_llm, country):
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("bogota", "Bogotá D.C"),
+        ("Bogota", "Bogotá D.C"),
+        ("ANTIOQUIA", "Antioquia"),
+        ("valle del cauca", "Valle del cauca"),
+    ],
+)
+async def test_canonicalize_normaliza_departamento(patch_llm, raw, expected):
     patch_llm(
         FakeLLM(
             result=(
-                IntentRouterDecision(
-                    trigger=IntentTrigger.TRIGGER_KPIS,
-                    confidence_score=0.93,
-                    rpc_intent={"rpc_name": "rpc_get_marketing_kpis", "country_filter": country},
-                    requires_heavy_path=False,
+                make_decision(
+                    confidence=0.93,
+                    departamento_filter=raw,
                 ),
                 8.0,
             )
         )
     )
 
-    decision, _ = await intent_router.route_intent(f"usuarios de {country}")
+    decision, _ = await intent_router.route_intent(f"Analiza las IPS en {raw}")
 
-    canonical = decision.rpc_intent.country_filter
-    assert canonical != country, "el pais debe quedar canonizado, no tal cual lo dio el LLM"
-    assert canonical == canonical.lower(), f"'{canonical}' deberia ir en minusculas"
+    assert decision.query_intent.departamento_filter == expected
+
+
+async def test_canonicalize_normaliza_naturaleza(patch_llm):
+    patch_llm(
+        FakeLLM(
+            result=(
+                make_decision(confidence=0.93, naturaleza_filter="publica"),
+                8.0,
+            )
+        )
+    )
+
+    decision, _ = await intent_router.route_intent("Compara las IPS publicas y privadas")
+
+    assert decision.query_intent.naturaleza_filter == "Pública"
+
+
+async def test_canonicalize_normaliza_nivel_y_grupo(patch_llm):
+    patch_llm(
+        FakeLLM(
+            result=(
+                make_decision(
+                    confidence=0.93,
+                    operation=QueryOperation.SUM_CAPACITY,
+                    nivel_atencion_filter="nivel 3",
+                    grupo_capacidad_filter="camas",
+                ),
+                8.0,
+            )
+        )
+    )
+
+    decision, _ = await intent_router.route_intent("Cuantas camas hay en IPS de nivel 3")
+
+    assert decision.query_intent.nivel_atencion_filter == "3"
+    assert decision.query_intent.grupo_capacidad_filter == "CAMAS"
 
 
 # ============================================================
@@ -207,6 +236,6 @@ async def test_fallback_usa_confianzas_fijas(patch_llm, timeout_error):
     """
     patch_llm(FakeLLM(error=timeout_error))
 
-    decision, _ = await intent_router.route_intent("Analiza el mercado de Peru")
+    decision, _ = await intent_router.route_intent("Analiza la cobertura de salud en Antioquia")
 
     assert decision.confidence_score in FALLBACK_CONFIDENCES

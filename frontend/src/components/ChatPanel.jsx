@@ -5,16 +5,19 @@ import Markdown from "./Markdown";
 
 const GREETING = {
   role: "assistant",
-  text: `👋 ¡Hola! He detectado **2 anomalías críticas** en los portales turísticos de Caldas en los últimos 20 minutos:
-  
-- Bloqueo en botón de pago tarjeta para celulares Xiaomi y Motorola.
-- Alta tasa de rebote en turistas de México buscando reservas para el Parque Los Nevados.`,
+  text: `👋 ¡Hola! Soy **Nexo IA**, tu analista del dataset público de **IPS colombianas** (datos.gov.co).
+
+Puedo darte cifras exactas y diagnósticos sobre:
+
+- Cobertura por departamento y municipio.
+- Capacidad instalada (camas, consultorios, salas…).
+- IPS públicas vs privadas y niveles de atención.`,
 };
 
 const THINKING_STEPS = [
   "Entendiendo tu consulta…",
-  "Consultando datos de Supabase RPC…",
-  "Comparando mercados y segmentos…",
+  "Consultando datos.gov.co vía SoQL…",
+  "Agregando cifras deterministas…",
   "Redactando respuesta analítica…",
 ];
 
@@ -91,7 +94,7 @@ export default function ChatPanel({ ask, isThinking, pendingQuestion, onPendingH
     onPendingHandled?.();
   }, [pendingQuestion, send, onPendingHandled]);
 
-  const unreadCount = messages.filter((m, i) => i > 0 && m.role === "assistant").length || 2;
+  const unreadCount = messages.filter((m, i) => i > 0 && m.role === "assistant").length;
 
   return (
     <>
@@ -116,8 +119,8 @@ export default function ChatPanel({ ask, isThinking, pendingQuestion, onPendingH
               AI
             </div>
             <div>
-              <h4 className="font-bold text-xs text-slate-900 dark:text-white">CaldasUX Copilot</h4>
-              <p className="text-[10px] text-slate-400">Asistente heurístico en tiempo real</p>
+              <h4 className="font-bold text-xs text-slate-900 dark:text-white">Nexo IA</h4>
+              <p className="text-[10px] text-slate-400">Analista de datos de IPS · cifras verificadas</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -151,7 +154,7 @@ export default function ChatPanel({ ask, isThinking, pendingQuestion, onPendingH
           <input 
             type="text" 
             ref={inputRef}
-            placeholder="Pregunta sobre la fricción de usuarios..." 
+            placeholder="Pregunta sobre las IPS: camas, cobertura, naturaleza..." 
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && send(input)}

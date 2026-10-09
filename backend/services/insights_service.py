@@ -1,3 +1,4 @@
+import json
 import time
 import logging
 from typing import Dict, Any, Optional
@@ -8,23 +9,23 @@ from backend.services.llm_client import llm_client, describe_error
 
 logger = logging.getLogger(__name__)
 
-HEAVY_PATH_SYSTEM_PROMPT = """Eres el Especialista Principal en Síntesis Cualitativa y Diagnóstico de Nexo IA (CloudLabs).
-Tu responsabilidad es generar un diagnóstico ejecutivo de alto impacto sobre el comportamiento de usuario, la fricción y las estrategias de marketing.
+HEAVY_PATH_SYSTEM_PROMPT = """Eres el Especialista Principal en Síntesis Cualitativa y Diagnóstico de Nexo IA.
+Tu responsabilidad es generar un diagnóstico ejecutivo de alto impacto sobre la cobertura y la capacidad instalada de las IPS (instituciones prestadoras de servicios de salud) de Colombia.
 
 REGLAS INFLEXIBLES:
 1. RECIBES DOS FUENTES DE CONTEXTO:
-   - 'KPIS NUMÉRICOS DETERMINISTAS': Datos exactos y agregados desde PostgreSQL RPC. Tus menciones numéricas DEBEN coincidir 100% con estos valores (0% alucinaciones).
-   - 'REGISTROS OPERACIONALES EN TOON': Conjunto de datos comprimido en Token-Oriented Object Notation que detalla eventos individuales.
+   - 'KPIS NUMÉRICOS DETERMINISTAS': cifras exactas agregadas por datos.gov.co vía SoQL. Tus menciones numéricas DEBEN coincidir 100% con estos valores (0% alucinaciones).
+   - 'REGISTROS OPERACIONALES EN TOON': muestra de registros individuales (sede, departamento, municipio, naturaleza, nivel de atención y capacidad) comprimida en Token-Oriented Object Notation.
 2. NUNCA alteres ni recalcules los KPIs numéricos; úsalos como evidencia empírica.
-3. Si un país o dispositivo presenta bajo engagement y alta frustración (ej. RageClicks o DeadClicks elevados en checkout), profundiza en la causa raíz de fricción.
-4. Genera recomendaciones estratégicas accionables y priorizadas (1 a 5).
+3. Profundiza en la causa raíz: concentración territorial, brechas entre IPS públicas y privadas, niveles de atención con menor oferta o tipos de capacidad deficitarios.
+4. Genera recomendaciones estratégicas accionables y priorizadas (1 a 5) para gestores de salud pública.
 5. Tu salida DEBE ser un JSON estrictamente estructurado según el esquema especificado.
 """
 
 class HeavyPathInsightsGenerator:
     """
     Generador de insights cualitativos (Heavy Path) basado en el proveedor LLM activo.
-    Consume KPIs exactos de Supabase + contexto TOON comprimido.
+    Consume KPIs exactos de datos.gov.co (SoQL) + contexto TOON comprimido.
     """
 
     async def generate_insight(
@@ -37,8 +38,8 @@ class HeavyPathInsightsGenerator:
         """
         Genera la síntesis narrativa combinando los KPIs deterministas con el contexto TOON.
 
-        `knowledge` es opcional: si viene vacío o falla la tabla, el prompt se
-        construye igual sin el bloque de directrices.
+        `knowledge` es opcional: si viene vacío, el prompt se construye igual
+        sin el bloque de directrices.
         """
         start_time = time.perf_counter()
 
@@ -50,10 +51,14 @@ class HeavyPathInsightsGenerator:
             )
             return self._mock_fallback_insight(kpis), latency_ms
 
+        # JSON explícito en vez de repr() de dict: más claro para el modelo y
+        # suele ocupar menos caracteres.
+        kpis_json = json.dumps(kpis, ensure_ascii=False, indent=2)
+
         user_content = (
             f"CONSULTA DEL USUARIO:\n{user_query}\n\n"
-            f"=== 1. KPIS DETERMINISTAS VERIFICADOS (SUPABASE RPC) ===\n"
-            f"{kpis}\n\n"
+            f"=== 1. KPIS DETERMINISTAS VERIFICADOS (datos.gov.co / Socrata SoQL) ===\n"
+            f"{kpis_json}\n\n"
             f"=== 2. CONTEXTO OPERACIONAL COMPRIMIDO (TOON NOTATION) ===\n"
             f"{toon_context}\n"
         )
@@ -91,23 +96,23 @@ class HeavyPathInsightsGenerator:
     def _mock_fallback_insight(self, kpis: Dict[str, Any]) -> QualitativeInsightResponse:
         from backend.schemas.insight_schemas import KeyObservation, ActionableRecommendation
         return QualitativeInsightResponse(
-            executive_summary="Análisis cualitativo generado a partir de las métricas deterministas de Supabase.",
+            executive_summary="Análisis cualitativo generado a partir de las métricas deterministas de datos.gov.co.",
             observations=[
                 KeyObservation(
-                    area="Flujo de Pago y Checkout",
-                    impact_level="ALTO",
-                    evidence_kpi=str(kpis.get("promedio_porcentaje_afectacion", "Elevado")),
-                    detail="Fricción recurrente identificada en eventos de RageClicks y DeadClicks."
+                    area="Cobertura territorial",
+                    impact_level="MEDIO",
+                    evidence_kpi=str(kpis.get("total_registros", "Ver KPIs")),
+                    detail="La oferta de IPS y su capacidad se concentra en pocos departamentos."
                 )
             ],
             recommendations=[
                 ActionableRecommendation(
                     priority=1,
-                    action="Revisar validaciones y botones del formulario de pago en dispositivos móviles",
-                    expected_outcome="Reducción inmediata de la tasa de rebote y aumento de conversión"
+                    action="Priorizar la planeación de capacidad en los departamentos con menor oferta relativa",
+                    expected_outcome="Reducción de brechas territoriales de atención en salud"
                 )
             ],
-            sentiment_and_friction_analysis="Alta tasa de frustración en usuarios móviles en comparación con desktop.",
+            coverage_and_capacity_analysis="La cobertura se concentra en los departamentos más poblados; revisar la distribución por naturaleza y nivel de atención.",
             data_verified=True
         )
 

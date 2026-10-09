@@ -12,9 +12,9 @@ class QueryRequest(BaseModel):
     )
 
 class LatencyMetrics(BaseModel):
-    router_latency_ms: float = Field(description="Tiempo tomado por el Router gpt-4o-mini en ms")
-    supabase_rpc_latency_ms: float = Field(description="Tiempo de ejecución determinista en Supabase RPC en ms")
-    heavy_path_latency_ms: Optional[float] = Field(default=None, description="Tiempo de síntesis en GPT-4o si aplicó en ms")
+    router_latency_ms: float = Field(description="Tiempo tomado por el Router en ms")
+    datosgov_latency_ms: float = Field(description="Tiempo de la consulta determinista SoQL a datos.gov.co en ms")
+    heavy_path_latency_ms: Optional[float] = Field(default=None, description="Tiempo de sintesis del modelo si aplico, en ms")
     total_pipeline_latency_ms: float = Field(description="Tiempo total extremo a extremo en ms")
 
 class QueryResponse(BaseModel):
@@ -22,7 +22,7 @@ class QueryResponse(BaseModel):
     trigger: IntentTrigger
     verified_deterministic_kpis: Optional[Dict[str, Any]] = Field(
         default=None,
-        description="KPIs exactos devueltos directamente por PostgreSQL RPC (0% alucinaciones)"
+        description="KPIs exactos devueltos por la agregacion SoQL de datos.gov.co (0% alucinaciones)"
     )
     toon_context_preview: Optional[str] = Field(
         default=None,

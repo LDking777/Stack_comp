@@ -1,46 +1,58 @@
+import asyncio
 import time
 import logging
+from typing import Any, Dict
+
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.config import settings
 from backend.schemas.api_schemas import QueryRequest, QueryResponse, LatencyMetrics
-from backend.schemas.router_schemas import IntentTrigger
+from backend.schemas.router_schemas import IntentTrigger, QueryOperation
 from backend.services.intent_router import intent_router, route_stats
-from backend.services.supabase_service import supabase_service
+from backend.services.datosgov_service import (
+    CAPACITY_COLUMN,
+    OPERATIONS,
+    datosgov_service,
+)
 from backend.services.toon_service import toon_compressor
 from backend.services.insights_service import insights_generator
 from backend.services.knowledge_service import knowledge_service
 from backend.services.llm_client import llm_client
-from backend.services.normalization import match_device
-from backend.mcp.connector import mcp_registry
 
 # Configuración de logs
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("nexo_fastapi")
 
-# RPC por defecto por trigger, solo cuando el router no devolvió rpc_name.
-_DEFAULT_RPC_BY_TRIGGER = {
-    IntentTrigger.TRIGGER_KPIS: "rpc_get_marketing_kpis",
-    IntentTrigger.TRIGGER_INSIGHTS: "rpc_get_engagement_summary",
-    IntentTrigger.TRIGGER_MATH: "rpc_execute_metric_math",
+# Operación determinista por defecto por trigger, solo cuando el router no
+# devolvió una operación concreta.
+_DEFAULT_OPERATION_BY_TRIGGER = {
+    IntentTrigger.TRIGGER_KPIS: QueryOperation.COUNT_REGISTROS.value,
+    IntentTrigger.TRIGGER_INSIGHTS: QueryOperation.GROUP_COUNT.value,
+    IntentTrigger.TRIGGER_MATH: QueryOperation.MATH.value,
 }
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("🚀 Iniciando Arquitectura MVP Flujo de Intenciones (FastAPI)...")
-    logger.info(f"⚡ Router Fast Path: {settings.ROUTER_MODEL}")
-    logger.info(f"🧠 Heavy Path Insights: {settings.INSIGHTS_MODEL}")
-    logger.info(f"🗄️ Supabase REST Endpoint: {settings.SUPABASE_URL}")
+    logger.info("🚀 Iniciando Nexo IA sobre datos.gov.co (IPS de Colombia)...")
+    logger.info("⚡ Router Fast Path: %s", settings.ROUTER_MODEL)
+    logger.info("🧠 Heavy Path Insights: %s", settings.INSIGHTS_MODEL)
+    logger.info("🗄️ Fuente de datos: %s", settings.DATOS_GOV_RESOURCE_URL)
+    logger.info("📚 Knowledge local: %s", knowledge_service.available)
     yield
     logger.info("🛑 Deteniendo servicios...")
 
+
 app = FastAPI(
     title=settings.APP_NAME,
-    description="Backend de baja latencia con separación estricta: Fast Path (Router gpt-4o-mini), Determinismo (PostgreSQL RPC) y Heavy Path (GPT-4o + TOON).",
-    version="2.0.0",
-    lifespan=lifespan
+    description=(
+        "Backend de baja latencia con separación estricta: Fast Path (router LLM), "
+        "Determinismo (agregación SoQL en datos.gov.co) y Heavy Path (síntesis narrativa + TOON)."
+    ),
+    version="3.0.0",
+    lifespan=lifespan,
 )
 
 # 1. Configuración de CORS para Frontend React
@@ -52,6 +64,78 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+def _build_query_spec(decision) -> Dict[str, Any]:
+    """
+    Traduce la decisión del router al `spec` que entiende datosgov_service.
+
+    Los filtros se canonizan dentro del servicio (normalize_filters), así que
+    aquí solo se mapean los nombres del contrato al de las columnas del dataset.
+    """
+    params = decision.query_intent
+    filters = {
+        "departamento": params.departamento_filter,
+        "municipio": params.municipio_filter,
+        "naturaleza": params.naturaleza_filter,
+        "num_nivel_atencion": params.nivel_atencion_filter,
+        "nom_grupo_capacidad": params.grupo_capacidad_filter,
+    }
+    return {
+        "operation": params.operation.value,
+        "group_by": params.group_by,
+        "math_operation": params.math_operation.value if params.math_operation else None,
+        "metric": params.target_metric or CAPACITY_COLUMN,
+        "filters": {k: v for k, v in filters.items() if v},
+    }
+
+
+def _format_fast_path(kpis_result: Dict[str, Any]) -> str:
+    """Renderiza el resultado determinista en markdown legible."""
+    header = "### ⚡ Datos deterministas verificados (Fast Path)\n\n"
+
+    if kpis_result.get("status") in {"sin_datos", "sin_coincidencias"}:
+        detalle = kpis_result.get("detalle") or "No obtuve datos para esa consulta."
+        return f"{header}{detalle}\n\n✅ **Sin cifras inventadas.**"
+
+    if "total_registros" in kpis_result:
+        body = f"**Registros (sedes de IPS):** {kpis_result['total_registros']:,}"
+    elif "total_prestadores" in kpis_result:
+        body = f"**Prestadores (IPS distintas):** {kpis_result['total_prestadores']:,}"
+    elif "total_capacidad" in kpis_result and "grupos" not in kpis_result:
+        body = f"**Capacidad instalada total:** {kpis_result['total_capacidad']:,}"
+    elif "grupos" in kpis_result:
+        valor_key = "capacidad" if "capacidad" in (kpis_result["grupos"][0] if kpis_result["grupos"] else {}) else "registros"
+        lineas = [
+            f"- **{g.get('valor')}:** {g.get(valor_key, 0):,}"
+            for g in kpis_result["grupos"]
+        ]
+        total = kpis_result.get("total_capacidad")
+        encabezado = f"**Desglose por {kpis_result.get('grupo_por')}:**"
+        if total is not None:
+            encabezado += f" (total {total:,})"
+        body = encabezado + "\n" + "\n".join(lineas)
+    elif "valores_distintos" in kpis_result:
+        body = (
+            f"**{kpis_result.get('categoria')}** "
+            f"({kpis_result.get('total_valores')} valores):\n"
+            f"{kpis_result['valores_distintos']}"
+        )
+    elif "valor" in kpis_result:
+        body = (
+            f"**{kpis_result.get('operacion')}** de "
+            f"`{kpis_result.get('metrica')}`: {kpis_result['valor']:,}"
+        )
+    else:
+        body = f"```json\n{kpis_result}\n```"
+
+    filtros = kpis_result.get("filtros_aplicados") or {}
+    filtro_txt = f"\n\n_Filtros aplicados: {filtros}_" if filtros else ""
+    return (
+        f"{header}{body}{filtro_txt}\n\n"
+        f"✅ **Verificado por datos.gov.co vía SoQL (0% alucinación numérica).**"
+    )
+
+
 # 2. Endpoint de Consulta Principal (Orquestación del Flujo de Intenciones)
 @app.post("/api/v1/query", response_model=QueryResponse, summary="Procesa la consulta del usuario mediante el Flujo de Intenciones")
 async def process_user_query(payload: QueryRequest):
@@ -61,10 +145,10 @@ async def process_user_query(payload: QueryRequest):
     if not user_query:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="La consulta no puede estar vacía.")
 
-    # --- PASO 1: Router de Intenciones (Fast Path - gpt-4o-mini con Structured Outputs) ---
+    # --- PASO 1: Router de Intenciones (Fast Path) ---
     decision, router_lat_ms = await intent_router.route_intent(user_query)
 
-    # Verificación de Seguridad y Prompt Injection
+    # Verificación de Seguridad, saludos, definiciones y clarificaciones.
     if not decision.is_safe or decision.trigger == IntentTrigger.TRIGGER_CLARIFICATION:
         total_lat_ms = (time.perf_counter() - total_start) * 1000
         return QueryResponse(
@@ -72,69 +156,50 @@ async def process_user_query(payload: QueryRequest):
             trigger=decision.trigger,
             is_safe=decision.is_safe,
             formatted_message=(
-                decision.security_reasoning or 
-                "Solo puedo analizar métricas de sesiones de usuario: engagement, "
-                "frustración, países, dispositivos y eventos de fricción. "
-                "Prueba con: «¿Cuál es la tasa de frustración en México?», "
-                "«Compara engagement en celular vs escritorio» o "
-                "«¿Qué páginas tienen más rage clicks?»."
+                decision.security_reasoning
+                or (
+                    "Solo puedo analizar datos de IPS colombianas: departamentos, "
+                    "municipios, naturaleza (pública/privada), niveles de atención y "
+                    "capacidad instalada. Prueba con: «¿Cuántas IPS hay en Antioquia?» "
+                    "o «¿Cuántas camas hay en Bogotá D.C?»."
+                )
             ),
             latency=LatencyMetrics(
                 router_latency_ms=round(router_lat_ms, 2),
-                supabase_rpc_latency_ms=0.0,
+                datosgov_latency_ms=0.0,
                 heavy_path_latency_ms=None,
-                total_pipeline_latency_ms=round(total_lat_ms, 2)
-            )
+                total_pipeline_latency_ms=round(total_lat_ms, 2),
+            ),
         )
 
-    # --- PASO 2: Ejecución Determinista (PostgreSQL RPC en Supabase) ---
-    # NUNCA el LLM calcula números; la base de datos ejecuta agregaciones deterministas
-    rpc_start = time.perf_counter()
-    # La RPC se deriva del trigger. El antiguo `or "rpc_get_marketing_kpis"`
-    # hacía que cualquier decisión sin rpc_name respondiera los mismos KPIs.
-    rpc_name = decision.rpc_intent.rpc_name or _DEFAULT_RPC_BY_TRIGGER.get(
-        decision.trigger, "rpc_get_marketing_kpis"
-    )
-    
-    # Mapeo de parámetros extraídos para la RPC
-    rpc_params = {}
-    if decision.rpc_intent.url_filter:
-        rpc_params["p_url"] = decision.rpc_intent.url_filter
-    if decision.rpc_intent.country_filter:
-        rpc_params["p_pais"] = decision.rpc_intent.country_filter
-    if decision.rpc_intent.device_filter:
-        rpc_params["p_dispositivo"] = decision.rpc_intent.device_filter
-    if decision.rpc_intent.math_operation:
-        rpc_params["p_operacion"] = decision.rpc_intent.math_operation.value
-        rpc_params["p_tabla"] = "metricas_marketing" if "marketing" in rpc_name else "grabaciones_analisis"
-        rpc_params["p_columna"] = decision.rpc_intent.target_metric or "sessionsWithMetricPercentage"
-    elif "list_distinct" in rpc_name:
-        # Listado de valores distintos: la columna a listar viene del router.
-        rpc_params["p_columna"] = decision.rpc_intent.target_metric or "dispositivos"
+    # --- PASO 2: Ejecución Determinista (agregación SoQL en datos.gov.co) ---
+    # NUNCA el LLM calcula números; la fuente pública ejecuta las agregaciones.
+    spec = _build_query_spec(decision)
+    if not spec.get("operation"):
+        spec["operation"] = _DEFAULT_OPERATION_BY_TRIGGER.get(
+            decision.trigger, QueryOperation.COUNT_REGISTROS.value
+        )
 
-    kpis_result = await supabase_service.call_rpc(rpc_name, rpc_params)
-    rpc_lat_ms = (time.perf_counter() - rpc_start) * 1000
+    datos_start = time.perf_counter()
+    kpis_result = await datosgov_service.execute(spec)
+    datos_lat_ms = (time.perf_counter() - datos_start) * 1000
 
     # --- PASO 3 & 4: Evaluación de Ruta (Fast Path vs. Heavy Path) ---
-    toon_preview = None
     qualitative_insight = None
     heavy_lat_ms = None
 
     if decision.requires_heavy_path or decision.trigger == IntentTrigger.TRIGGER_INSIGHTS:
-        # Recuperación de datos operacionales para contexto TOON
-        target_table = "grabaciones_analisis" if "engagement" in rpc_name else "metricas_marketing"
-        raw_records = await supabase_service.fetch_operational_records(target_table, limit=10)
-        
-        # Compresión de contexto en Token-Oriented Object Notation (TOON)
+        # Registros operacionales para contexto TOON, acotados a los mismos
+        # filtros de la consulta para que el contexto sea relevante.
+        raw_records = await datosgov_service.fetch_records(
+            limit=10, filters=spec.get("filters")
+        )
         toon_context = toon_compressor.compress_records(raw_records)
-        toon_preview = toon_context[:250] + ("..." if len(toon_context) > 250 else "")
 
-        # Knowledge de auditoría aplicable a esta consulta. Opcional: si la
-        # tabla no está desplegada, devuelve contexto vacío y el Heavy Path
-        # sigue funcionando sin las directrices.
+        # Knowledge propio del asistente. Opcional: si falta el archivo,
+        # devuelve contexto vacío y el Heavy Path sigue sin directrices.
         knowledge = await knowledge_service.build_context(user_query)
 
-        # Generación de Insight Cualitativo con el proveedor activo
         qualitative_insight, heavy_lat_ms = await insights_generator.generate_insight(
             user_query=user_query,
             kpis=kpis_result,
@@ -142,27 +207,24 @@ async def process_user_query(payload: QueryRequest):
             knowledge=knowledge,
         )
 
-        # Construcción del mensaje renderizable
-        obs_text = "\n".join([f"- **[{o.impact_level}] {o.area}:** {o.detail} *(Evidencia: {o.evidence_kpi})*" for o in qualitative_insight.observations])
-        recs_text = "\n".join([f"{r.priority}. **{r.action}** → *{r.expected_outcome}*" for r in qualitative_insight.recommendations])
+        obs_text = "\n".join(
+            f"- **[{o.impact_level}] {o.area}:** {o.detail} *(Evidencia: {o.evidence_kpi})*"
+            for o in qualitative_insight.observations
+        )
+        recs_text = "\n".join(
+            f"{r.priority}. **{r.action}** → *{r.expected_outcome}*"
+            for r in qualitative_insight.recommendations
+        )
 
         formatted_message = (
             f"### 📊 Diagnóstico Estratégico NEXO IA (Heavy Path)\n\n"
             f"{qualitative_insight.executive_summary}\n\n"
             f"#### 🔍 Hallazgos Clave:\n{obs_text}\n\n"
             f"#### 💡 Acciones Recomendadas:\n{recs_text}\n\n"
-            f"_{qualitative_insight.sentiment_and_friction_analysis}_"
+            f"_{qualitative_insight.coverage_and_capacity_analysis}_"
         )
     else:
-        # Respuesta inmediata Fast Path con KPIs verificados (0% alucinaciones)
-        formatted_message = (
-            f"### ⚡ Datos Deterministas Verificados (Fast Path)\n\n"
-            f"La base de datos ejecutó la función PostgreSQL `{rpc_name}` determinista:\n\n"
-            f"```json\n"
-            f"{kpis_result}\n"
-            f"```\n\n"
-            f"✅ **Verificado por PostgreSQL (0% alucinación numérica).**"
-        )
+        formatted_message = _format_fast_path(kpis_result)
 
     total_lat_ms = (time.perf_counter() - total_start) * 1000
 
@@ -170,89 +232,68 @@ async def process_user_query(payload: QueryRequest):
         query=user_query,
         trigger=decision.trigger,
         verified_deterministic_kpis=kpis_result,
-        toon_context_preview=toon_preview,
         qualitative_insight=qualitative_insight,
         formatted_message=formatted_message,
         latency=LatencyMetrics(
             router_latency_ms=round(router_lat_ms, 2),
-            supabase_rpc_latency_ms=round(rpc_lat_ms, 2),
+            datosgov_latency_ms=round(datos_lat_ms, 2),
             heavy_path_latency_ms=round(heavy_lat_ms, 2) if heavy_lat_ms else None,
-            total_pipeline_latency_ms=round(total_lat_ms, 2)
+            total_pipeline_latency_ms=round(total_lat_ms, 2),
         ),
-        is_safe=True
+        is_safe=True,
     )
+
 
 # 3. Endpoint de Tableros Analíticos (Para alimentar el Dashboard Visual)
 @app.get("/api/v1/dashboard", summary="Obtiene métricas agregadas y datos tabulares para el dashboard visual")
 async def get_dashboard_data():
-    records_grab = await supabase_service.fetch_operational_records("grabaciones_analisis", limit=50)
-    records_mkt = await supabase_service.fetch_operational_records("metricas_marketing", limit=50)
+    (
+        total_registros,
+        total_prestadores,
+        by_departamento,
+        by_naturaleza,
+        by_nivel,
+        by_capacidad,
+        capacity_by_grupo,
+        camas,
+        recent_records,
+    ) = await asyncio.gather(
+        datosgov_service.execute({"operation": "count_registros"}),
+        datosgov_service.execute({"operation": "count_prestadores"}),
+        datosgov_service.execute({"operation": "group_count", "group_by": "departamento", "limit": 40}),
+        datosgov_service.execute({"operation": "group_count", "group_by": "naturaleza"}),
+        datosgov_service.execute({"operation": "group_count", "group_by": "num_nivel_atencion"}),
+        datosgov_service.execute({"operation": "group_count", "group_by": "nom_grupo_capacidad"}),
+        datosgov_service.execute({"operation": "sum_capacity", "group_by": "nom_grupo_capacidad", "limit": 10}),
+        datosgov_service.execute({
+            "operation": "sum_capacity",
+            "filters": {"nom_grupo_capacidad": "CAMAS"},
+        }),
+        datosgov_service.fetch_records(limit=8),
+    )
 
-    # 1. Cálculos de grabaciones
-    total_sessions = len(records_grab)
-    scores = [float(r.get("standarized_engagement_score") or 0.0) for r in records_grab]
-    avg_engagement = round(sum(scores) / total_sessions, 2) if total_sessions else 0.0
-    
-    frustrated = [r for r in records_grab if str(r.get("posible_frustracion")) in ["1", "true", "True"]]
-    frustration_rate = round((len(frustrated) * 100.0 / total_sessions), 1) if total_sessions else 0.0
-    
-    avg_duration = round(sum(int(r.get("duracion_sesion_segundos") or 0) for r in records_grab) / total_sessions, 0) if total_sessions else 0
-
-    # 2. Desglose por país
-    country_map = {}
-    for r in records_grab:
-        c = r.get("pais", "Desconocido")
-        if c not in country_map:
-            country_map[c] = {"pais": c, "total": 0, "scores": [], "frustrated": 0}
-        country_map[c]["total"] += 1
-        country_map[c]["scores"].append(float(r.get("standarized_engagement_score") or 0.0))
-        if str(r.get("posible_frustracion")) in ["1", "true", "True"]:
-            country_map[c]["frustrated"] += 1
-
-    country_stats = []
-    for c, data in country_map.items():
-        avg_score = round(sum(data["scores"]) / data["total"], 2) if data["total"] else 0.0
-        country_stats.append({
-            "pais": c,
-            "sesiones": data["total"],
-            "engagement": avg_score,
-            "frustracion_pct": round(data["frustrated"] * 100.0 / data["total"], 1)
-        })
-    country_stats.sort(key=lambda x: x["sesiones"], reverse=True)
-
-    # 3. Desglose por dispositivo
-    mobile_count = sum(1 for r in records_grab if match_device(str(r.get("dispositivo", "")), "Mobile"))
-    desktop_count = total_sessions - mobile_count
-
-    # 4. URLs con mayor fricción
-    url_friction = []
-    for r in records_mkt:
-        url_friction.append({
-            "url": r.get("Url", "N/A"),
-            "metrica": r.get("metricName", "N/A"),
-            "afectacion_pct": float(r.get("sessionsWithMetricPercentage") or 0.0),
-            "sesiones_afectadas": int(r.get("sessionsCount") or 0),
-            "dispositivo": r.get("Device", "N/A")
-        })
-    url_friction.sort(key=lambda x: x["afectacion_pct"], reverse=True)
+    departamentos = by_departamento.get("grupos", [])
+    total_capacidad = sum(
+        g.get("capacidad", 0) for g in capacity_by_grupo.get("grupos", [])
+    )
 
     return {
         "kpis": {
-            "total_sesiones": total_sessions,
-            "avg_engagement": avg_engagement,
-            "frustration_rate": frustration_rate,
-            "avg_duration_sec": int(avg_duration),
-            "total_friction_events": len(records_mkt)
+            "total_registros": total_registros.get("total_registros", 0),
+            "total_prestadores": total_prestadores.get("total_prestadores", 0),
+            "total_departamentos": len(departamentos),
+            "total_capacidad": total_capacidad,
+            "total_camas": camas.get("total_capacidad", 0),
         },
-        "country_stats": country_stats,
-        "device_breakdown": {
-            "mobile": mobile_count,
-            "desktop": desktop_count,
-            "mobile_pct": round(mobile_count * 100.0 / total_sessions, 1) if total_sessions else 0
-        },
-        "url_friction": url_friction[:6],
-        "recent_recordings": records_grab[:8]
+        "by_departamento": departamentos,
+        "by_naturaleza": by_naturaleza.get("grupos", []),
+        "by_nivel": by_nivel.get("grupos", []),
+        "by_capacidad": by_capacidad.get("grupos", []),
+        "capacity_by_grupo": capacity_by_grupo.get("grupos", []),
+        "recent_records": recent_records,
+        "fuente": datosgov_service.dataset_info(),
     }
+
 
 # 4. Healthcheck & Diagnóstico
 @app.get("/api/v1/health", summary="Verificación de estado de la arquitectura")
@@ -277,24 +318,16 @@ async def healthcheck():
             "failover": llm_client.failover_stats(),
         },
         "compression": "TOON (python-toon)",
-        "database": {
-            "endpoint": settings.SUPABASE_URL,
-            "deterministic_execution": "PostgreSQL RPC",
-            "rpcs_deployed": False,
-            "rpcs_note": (
-                "Las funciones RPC aún no están compiladas en Supabase. "
-                "El servicio aplica agregación determinista equivalente en Python."
-            )
+        "fuente_datos": {
+            **datosgov_service.dataset_info(),
+            "consultas": list(OPERATIONS),
         },
         "mcp": {
-            "enabled": settings.MCP_ENABLED
+            "enabled": settings.MCP_ENABLED,
         },
-        "knowledge_auditoria": {
+        "knowledge": {
             "available": knowledge_service.available,
-            "table": "knowledge_auditoria",
-            "note": (
-                "Tabla no desplegada o credenciales ausentes: el Heavy Path "
-                "funciona igual, sin directrices de auditoría."
-            ),
+            "archivo": str(knowledge_service.path),
+            "note": "Knowledge local del asistente; si falta, el Heavy Path funciona sin directrices.",
         },
     }

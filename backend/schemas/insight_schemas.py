@@ -2,30 +2,30 @@ from typing import List, Optional
 from pydantic import BaseModel, Field
 
 class KeyObservation(BaseModel):
-    area: str = Field(description="Área afectada (ej. 'Checkout Mobile', 'Engagement México')")
+    area: str = Field(description="Area o dimension analizada (ej. 'Cobertura en Antioquia', 'Capacidad pública Bogotá')")
     impact_level: str = Field(description="'ALTO', 'MEDIO', o 'BAJO'")
-    evidence_kpi: str = Field(description="KPI numérico exacto proveniente de la base de datos que sustenta la observación")
-    detail: str = Field(description="Explicación cualitativa del síntoma")
+    evidence_kpi: str = Field(description="KPI numerico exacto proveniente de la consulta SoQL que sustenta la observacion")
+    detail: str = Field(description="Explicacion cualitativa del hallazgo")
 
 class ActionableRecommendation(BaseModel):
-    priority: int = Field(ge=1, le=5, description="Prioridad de ejecución (1 = Más urgente)")
-    action: str = Field(description="Acción concreta recomendada")
-    expected_outcome: str = Field(description="Resultado esperado tras la acción")
+    priority: int = Field(ge=1, le=5, description="Prioridad de ejecucion (1 = Mas urgente)")
+    action: str = Field(description="Accion concreta recomendada")
+    expected_outcome: str = Field(description="Resultado esperado tras la accion")
 
 class QualitativeInsightResponse(BaseModel):
     executive_summary: str = Field(
-        description="Resumen ejecutivo de alto nivel sintetizando la situación analítica"
+        description="Resumen ejecutivo de alto nivel sintetizando la situacion analitica"
     )
     observations: List[KeyObservation] = Field(
-        description="Puntos clave observados combinando métricas deterministas y contexto TOON"
+        description="Puntos clave observados combinando metricas deterministas y contexto TOON"
     )
     recommendations: List[ActionableRecommendation] = Field(
-        description="Recomendaciones estratégicas basadas en la evidencia"
+        description="Recomendaciones estrategicas basadas en la evidencia"
     )
-    sentiment_and_friction_analysis: str = Field(
-        description="Análisis del nivel de frustración, abandono y engagement del usuario"
+    coverage_and_capacity_analysis: str = Field(
+        description="Analisis de la cobertura geografica, la naturaleza publica/privada y los brechas de capacidad instalada"
     )
     data_verified: bool = Field(
         default=True,
-        description="Garantía de que las afirmaciones numéricas concuerdan con la RPC de Supabase"
+        description="Garantia de que las afirmaciones numericas concuerdan con la consulta SoQL de datos.gov.co"
     )
