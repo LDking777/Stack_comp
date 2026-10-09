@@ -25,6 +25,7 @@ from backend.services.normalization import (
     normalize_grupo_capacidad,
     normalize_naturaleza,
     normalize_nivel_atencion,
+    normalize_descripcion_capacidad,
 )
 
 logger = logging.getLogger(__name__)
@@ -33,6 +34,23 @@ logger = logging.getLogger(__name__)
 CAPACITY_COLUMN = "num_cantidad_capacidad_instalada"
 GROUP_CAPACITY_COLUMN = "nom_grupo_capacidad"
 PRESTADOR_COLUMN = "c_digo_prestador"
+ANALYTIC_COLUMNS = frozenset({
+    "departamento",
+    "municipio",
+    "naturaleza",
+    "num_nivel_atencion",
+    "nom_grupo_capacidad",
+    "nom_descripcion_capacidad",
+})
+ANALYTIC_RECORD_COLUMNS = (
+    "departamento",
+    "municipio",
+    "naturaleza",
+    "num_nivel_atencion",
+    "nom_grupo_capacidad",
+    "nom_descripcion_capacidad",
+    CAPACITY_COLUMN,
+)
 
 # Operaciones deterministas que el servicio sabe ejecutar.
 OPERATIONS = (
@@ -54,6 +72,7 @@ _FILTER_NORMALIZERS = {
     "naturaleza": normalize_naturaleza,
     "num_nivel_atencion": normalize_nivel_atencion,
     "nom_grupo_capacidad": normalize_grupo_capacidad,
+    "nom_descripcion_capacidad": normalize_descripcion_capacidad,
 }
 _CACHE_TTL_S = 600.0
 _MUNICIPIOS_TTL_S = 86400.0
@@ -152,6 +171,23 @@ class DatosGovService:
             }
 
         filters = normalize_filters(spec.get("filters") or {})
+        invalid_filters = set(filters) - ANALYTIC_COLUMNS
+        group_by = spec.get("group_by")
+        metric = spec.get("metric") or CAPACITY_COLUMN
+        if invalid_filters:
+            return self._unsupported_query(
+                "Solo se permiten filtros analíticos agregados; no se consultan "
+                "códigos, nombres, NIT ni datos de contacto de IPS."
+            )
+        if group_by and group_by not in ANALYTIC_COLUMNS:
+            return self._unsupported_query(
+                "Solo se permiten desgloses agregados por ubicación, naturaleza, "
+                "nivel y tipo de capacidad."
+            )
+        if metric != CAPACITY_COLUMN:
+            return self._unsupported_query(
+                "La única métrica numérica disponible es la cantidad de capacidad instalada."
+            )
 
         # Los municipios llegan en MAYUSCULAS y con acentos propios: se
         # resuelven contra el indice dinamico del dataset.
@@ -238,7 +274,10 @@ class DatosGovService:
         if cached is not None:
             return cached
 
-        params: Dict[str, Any] = {"$limit": limit}
+        params: Dict[str, Any] = {
+            "$select": ",".join(ANALYTIC_RECORD_COLUMNS),
+            "$limit": limit,
+        }
         if where:
             params["$where"] = where
 
@@ -265,8 +304,19 @@ class DatosGovService:
             "filas_conocidas": 41427,
             "nota": (
                 "Agregaciones ejecutadas por Socrata via SoQL; el LLM solo "
-                "narra. Fuente congelada desde 2022 (actualizacion anual)."
+                "narra. Análisis agregado por ubicación, naturaleza, nivel de "
+                "atención, grupo y descripción de capacidad; no se consultan "
+                "identificadores ni datos de contacto. Fuente con corte 2022-11-21."
             ),
+        }
+
+    @staticmethod
+    def _unsupported_query(detail: str) -> Dict[str, Any]:
+        return {
+            "error": "consulta_no_permitida",
+            "status": "sin_datos",
+            "detalle": detail,
+            "modo": _MODE,
         }
 
     # ── Internos ─────────────────────────────────────────────────────

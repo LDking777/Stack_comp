@@ -106,6 +106,56 @@ _GRUPO_ALIASES = {
 }
 GRUPO_LOOKUP = {**_GRUPO_INDEX, **_GRUPO_ALIASES}
 
+# ── Descripciones de capacidad instaladas (valores reales del dataset) ──
+DESCRIPCIONES_CAPACIDAD = [
+    "Consulta Externa", "Procedimientos", "Básica", "Adultos", "Urgencias",
+    "Observación Adultos Mujeres", "Observación Adultos Hombres",
+    "Observación Pediátrica", "Pediátrica", "Medicalizada", "Sala de Cirugía",
+    "Partos", "TPR", "Unidad Móvil", "Intermedia Adultos",
+    "Intensiva Adultos", "Sillas de Hemodiálisis", "Salud Mental Adulto",
+    "Sillas de Quimioterapia", "Incubadora Intensiva Neonatal",
+    "Incubadora Intermedia Neonatal", "Salud Mental", "Quirófano",
+    "Atención del Parto", "Paciente crónico sin ventilador",
+    "Cuna Básico Neonatal", "SPA Básico Adultos", "SPA Adultos", "SPA",
+    "Incubadora Básico Neonatal", "Intensiva Pediátrica",
+    "Intermedia Pediátrica", "Paciente crónico con ventilador",
+    "Salud Mental Pediátrico", "Cuna Intermedia Neonatal",
+    "Cuidado Intermedio Adulto", "Cuidado Intensivo Adulto",
+    "SPA Pediátricas", "Otras patologías", "SPA Básico Pediátricos",
+    "Sala de Radioterapia", "Obstetricia", "Cuidado Intermedio Neonatal",
+    "Cuidado básico neonatal", "Cuna Intermedia Pediátrica",
+    "Cuidado Intensivo Neonatal", "Cuidado Intermedio Pediátrico",
+    "Cuna Intensiva Neonatal", "Cuidado Intensivo Pediátrico",
+    "Cuna Intensiva Pediátrica", "Intensiva Quemado Adulto",
+    "Farmacodependencia", "Intensiva Quemado pediátrica", "Psiquiatría",
+    "Institución Paciente Crónico", "Unidad de Quemados Adulto",
+    "Transplante de progenitores hematopoyeticos",
+    "Unidad de Quemados Pediátrico", "Cuidado Agudo Mental",
+]
+_DESCRIPCION_INDEX = _index(DESCRIPCIONES_CAPACIDAD)
+_DESCRIPCION_ALIASES = {
+    "camas de adultos": "Adultos",
+    "cama de adulto": "Adultos",
+    "camas pediatricas": "Pediátrica",
+    "cama pediatrica": "Pediátrica",
+    "observacion pediatrica": "Observación Pediátrica",
+    "sala de cirugias": "Sala de Cirugía",
+    "salas de cirugia": "Sala de Cirugía",
+    "cirugias": "Sala de Cirugía",
+    "uci adultos": "Cuidado Intensivo Adulto",
+    "uci adulto": "Cuidado Intensivo Adulto",
+    "uci pediatrica": "Cuidado Intensivo Pediátrico",
+    "uci neonatal": "Cuidado Intensivo Neonatal",
+    "hemodialisis": "Sillas de Hemodiálisis",
+    "quimioterapia": "Sillas de Quimioterapia",
+    "unidad movil": "Unidad Móvil",
+    "incubadoras neonatales": "Incubadora Básico Neonatal",
+}
+DESCRIPCION_CAPACIDAD_LOOKUP = {
+    **_DESCRIPCION_INDEX,
+    **{fold(alias): canonical for alias, canonical in _DESCRIPCION_ALIASES.items()},
+}
+
 
 def normalize_departamento(value: str | None) -> str | None:
     """
@@ -163,6 +213,16 @@ def normalize_grupo_capacidad(value: str | None) -> str | None:
     if folded in _GRUPO_ALIASES:
         return _GRUPO_ALIASES[folded]
     return str(value).strip()
+
+
+def normalize_descripcion_capacidad(value: str | None) -> str | None:
+    """Normaliza una descripción de capacidad a su valor exacto en Socrata."""
+    if value is None:
+        return None
+    folded = fold(value)
+    if not folded:
+        return None
+    return DESCRIPCION_CAPACIDAD_LOOKUP.get(folded, str(value).strip())
 
 
 def match_department(value: str, target: str) -> bool:

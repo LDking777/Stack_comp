@@ -37,7 +37,8 @@ class QueryIntentParams(BaseModel):
         default=None,
         description=(
             "Columna para agrupar cuando la operacion lo requiere: 'departamento', "
-            "'municipio', 'naturaleza', 'num_nivel_atencion' o 'nom_grupo_capacidad'"
+            "'municipio', 'naturaleza', 'num_nivel_atencion', "
+            "'nom_grupo_capacidad' o 'nom_descripcion_capacidad'"
         ),
     )
     departamento_filter: Optional[str] = Field(
@@ -63,6 +64,14 @@ class QueryIntentParams(BaseModel):
             "'AMBULANCIAS', 'CAMILLAS', 'UNIDAD MOVIL' o 'SILLAS'"
         ),
     )
+    descripcion_capacidad_filter: Optional[str] = Field(
+        default=None,
+        description=(
+            "Subtipo de capacidad instalado según el valor real del dataset, "
+            "por ejemplo 'Pediátrica', 'Urgencias', 'Sala de Cirugía' o "
+            "'Cuidado Intensivo Neonatal'."
+        ),
+    )
     math_operation: Optional[MathOperation] = Field(
         default=None,
         description="Operacion matematica si la operacion es 'math' ('sum', 'avg', 'count', 'min', 'max')",
@@ -70,8 +79,8 @@ class QueryIntentParams(BaseModel):
     target_metric: Optional[str] = Field(
         default=None,
         description=(
-            "Columna numerica sobre la que opera 'math' (por defecto "
-            "'num_cantidad_capacidad_instalada', la capacidad instalada)"
+            "Única columna numérica analítica: "
+            "'num_cantidad_capacidad_instalada' (capacidad instalada)"
         ),
     )
 

@@ -12,7 +12,7 @@ Nexo IA es un asistente de Business Intelligence sobre el dataset público de **
 
 El usuario hace preguntas en lenguaje natural ("¿por qué Antioquia concentra tanta capacidad?", "¿cuántas camas hay en Bogotá?") y recibe una respuesta con cifras verificadas y una interpretación narrativa.
 
-No es un chat de propósito general. El dominio es el sistema de salud colombiano: cobertura de IPS, capacidad instalada (camas, consultorios, salas…), naturaleza jurídica (pública/privada/mixta) y niveles de atención.
+No es un chat de propósito general. El dominio es el sistema de salud colombiano: cobertura territorial, naturaleza jurídica, niveles de atención y capacidad instalada agregada por grupo y descripción (p. ej. camas pediátricas, urgencias, salas de cirugía, cuidado neonatal). No busca ni lista códigos, nombres, NIT ni datos de contacto de IPS individuales.
 
 ### El invariante central
 
@@ -48,7 +48,7 @@ api-service-v2/
 │   │                           #   LiveTokenResponse, LiveToolRequest, LiveToolResponse
 │   └── services/               # Lógica de negocio (aquí vive el 90% del trabajo)
 │       ├── intent_router.py    # Fast Path: query -> trigger + filtros + operación
-│       ├── datosgov_service.py # SoQL a datos.gov.co (agregación determinista)
+│       ├── datosgov_service.py # SoQL a datos.gov.co (agregación y muestra no identificable)
 │       ├── toon_service.py     # Compresión TOON del contexto
 │       ├── insights_service.py # Heavy Path: KPIs -> narrativa
 │       ├── knowledge_service.py# Directrices desde backend/data/knowledge_ips.json
@@ -109,7 +109,8 @@ La voz reutiliza el mismo pipeline determinista; el modelo Live solo narra.
 2. `backend/main.py` (`POST /api/v1/live/token`) → `live_token_service.py` mintea una credencial efímera (`auth_tokens`, `v1alpha`). La `GEMINI_API_KEY` **nunca sale del backend**.
 3. El navegador abre el WebSocket contra Gemini Live con `token.token`, envía PCM 16 kHz y reproduce PCM 24 kHz (`utils/pcmAudio.js`).
 4. Cualquier pregunta con cifras dispara la herramienta `consultar_ips` → `POST /api/v1/live/tool` → `_execute_query()` (mismo pipeline de `POST /api/v1/query`); la respuesta vuelve al modelo vía `sendToolResponse`.
-5. Al completar cada turno, las transcripciones del usuario y de la respuesta hablada se agregan al historial visible del chat; no hay diarización acústica. Si Gemini no entrega transcripción de salida, se muestra como respaldo la respuesta verificada de la herramienta.
+5. Las consultas y muestras analíticas se limitan a departamento, municipio, naturaleza, nivel, grupo y descripción de capacidad y cantidad. No se permiten filtros, desgloses ni muestras de código, nombre, NIT o contacto individual.
+6. Al completar cada turno, las transcripciones del usuario y de la respuesta hablada se agregan al historial visible del chat; no hay diarización acústica. Si Gemini no entrega transcripción de salida, se muestra como respaldo la respuesta verificada de la herramienta.
 
 ---
 
@@ -204,6 +205,7 @@ Los KPIs siguen viniendo exclusivamente de **datos.gov.co** (Socrata/SoQL). Supa
 - **UI**: tema claro/oscuro persistido (`ThemeContext`) y acento emerald. El chat se llama **NEXO IA**.
 - **Rutas principales**: `/` es la portada con el avatar cuadrado grande a la izquierda y el chat persistente a la derecha; en escritorio el avatar escala por ancho y altura disponibles, y en móvil compacto mantiene más espacio visual sin desbordar el encabezado. Tablet/móvil mantiene scroll natural si el contenido excede el alto. `/dashboard` conserva el tablero analítico anterior y el chat flotante. El header permite navegar entre ambas. El usuario inicia el micrófono explícitamente desde el control de voz.
 - **Memoria y documentos por sesión**: `supabase_mvp.sql` crea tablas con RLS, búsqueda pgvector y bucket privado. El backend persiste historial, fragmentos, embeddings y archivo original; el frontend conserva el `session_id` y el historial visible local. Embeddings con Gemini y el prompt RAG limitan documentos/preguntas al dominio IPS/salud de Colombia. Requiere ejecutar el SQL y configurar `SUPABASE_URL`, `SUPABASE_SECRET_KEY` (o `SUPABASE_SERVICE_ROLE_KEY`) y `GEMINI_API_KEY` en el backend. La conexión real de DB, búsqueda y limpieza se probó el 2026-10-09 con contenido sintético temporal.
+- **Análisis agregado de IPS.** El router cubre ubicación, naturaleza, nivel de atención y grupos y descripciones de capacidad de `nom_descripcion_capacidad` (por ejemplo, pediátrica, urgencias, cirugía, neonatal y salud mental). Los agregados aceptan filtros y desglose por estas dimensiones; `fetch_records()` solo trae esas columnas y cantidad. Se excluyen códigos, nombres, NIT, sedes identificables y datos de contacto del chat, del contexto LLM y de la muestra del dashboard. Los conteos totales de IPS siguen disponibles sin exponer sus identificadores.
 - **Voz con Gemini Live.** El backend mintea credenciales efímeras (`POST /api/v1/live/token`, la `GEMINI_API_KEY` no sale del server) y el navegador conversa por WebSocket (`gemini-3.8-live`). Las preguntas con cifras disparan la herramienta `consultar_ips` → `POST /api/v1/live/tool` → mismo pipeline SoQL. El chat de texto sigue intacto; al completar cada turno, las transcripciones del usuario y de la respuesta hablada se agregan al historial visible y persistente del chat. Si Gemini no entrega transcripción de salida, se muestra como respaldo la respuesta verificada de la herramienta. No hay diarización acústica. El avatar de portada permanece estático durante la conversación. **Conexión real verificada** (2026-10-09): token efímero + sesión WebSocket contra `gemini-3.8-live` responden OK.
 
 Pendientes, en orden de impacto:

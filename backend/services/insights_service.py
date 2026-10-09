@@ -15,11 +15,12 @@ Tu responsabilidad es generar un diagnóstico ejecutivo de alto impacto sobre la
 REGLAS INFLEXIBLES:
 1. RECIBES DOS FUENTES DE CONTEXTO:
    - 'KPIS NUMÉRICOS DETERMINISTAS': cifras exactas agregadas por datos.gov.co vía SoQL. Tus menciones numéricas DEBEN coincidir 100% con estos valores (0% alucinaciones).
-   - 'REGISTROS OPERACIONALES EN TOON': muestra de registros individuales (sede, departamento, municipio, naturaleza, nivel de atención y capacidad) comprimida en Token-Oriented Object Notation.
+   - 'MUESTRA ANALÍTICA EN TOON': muestra limitada a ubicación, naturaleza, nivel y tipo/cantidad de capacidad; no contiene identificadores ni datos de contacto.
 2. NUNCA alteres ni recalcules los KPIs numéricos; úsalos como evidencia empírica.
 3. Profundiza en la causa raíz: concentración territorial, brechas entre IPS públicas y privadas, niveles de atención con menor oferta o tipos de capacidad deficitarios.
 4. Genera recomendaciones estratégicas accionables y priorizadas (1 a 5) para gestores de salud pública.
-5. Tu salida DEBE ser un JSON estrictamente estructurado según el esquema especificado.
+5. Responde con análisis agregado; no solicites ni reveles códigos, nombres, NIT ni contactos de IPS individuales.
+6. Tu salida DEBE ser un JSON estrictamente estructurado según el esquema especificado.
 """
 
 class HeavyPathInsightsGenerator:

@@ -48,6 +48,7 @@ def test_normalize_filters_canoniza_al_valor_del_dataset():
             "naturaleza": "publica",
             "num_nivel_atencion": "nivel 3",
             "nom_grupo_capacidad": "camas",
+            "nom_descripcion_capacidad": "camas pediatricas",
         }
     )
 
@@ -55,6 +56,7 @@ def test_normalize_filters_canoniza_al_valor_del_dataset():
     assert normalized["naturaleza"] == "Pública"
     assert normalized["num_nivel_atencion"] == "3"
     assert normalized["nom_grupo_capacidad"] == "CAMAS"
+    assert normalized["nom_descripcion_capacidad"] == "Pediátrica"
 
 
 @pytest.mark.parametrize(
@@ -144,6 +146,39 @@ async def test_sum_capacity_sin_group_by_es_escalar(service):
     assert result["filtros_aplicados"]["nom_grupo_capacidad"] == "CAMAS"
 
 
+async def test_sum_capacity_por_descripcion(service):
+    svc = service("sum(", [{"sum_num_cantidad_capacidad_instalada": "1240"}])
+
+    result = await svc.execute(
+        {
+            "operation": "sum_capacity",
+            "filters": {"nom_descripcion_capacidad": "uci neonatal"},
+        }
+    )
+
+    assert result["total_capacidad"] == 1240
+    assert result["filtros_aplicados"]["nom_descripcion_capacidad"] == (
+        "Cuidado Intensivo Neonatal"
+    )
+
+
+@pytest.mark.parametrize(
+    "spec",
+    [
+        {"operation": "group_count", "group_by": "nombre_prestador"},
+        {"operation": "list_distinct", "group_by": "nit_ips"},
+        {"operation": "count_registros", "filters": {"c_digo_prestador": "123"}},
+    ],
+)
+async def test_rechaza_consultas_con_identificadores(spec, service):
+    svc = service("count(*)", [{"count": "1"}])
+
+    result = await svc.execute(spec)
+
+    assert result["status"] == "sin_datos"
+    assert result["error"] == "consulta_no_permitida"
+
+
 async def test_math_avg(service):
     svc = service("avg(", [{"avg_num_cantidad_capacidad_instalada": "5.3"}])
 
@@ -188,3 +223,47 @@ async def test_sin_datos_marca_error_sin_alucinar(service):
 
     assert result["status"] == "sin_datos"
     assert "fuente_publica_no_disponible" in result["error"]
+
+
+async def test_fetch_records_solo_solicita_campos_analiticos(monkeypatch):
+    captured = {}
+
+    class FakeResponse:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return [{"departamento": "Antioquia"}]
+
+    class FakeAsyncClient:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        async def get(self, _url, params):
+            captured.update(params)
+            return FakeResponse()
+
+    monkeypatch.setattr(datosgov_module.httpx, "AsyncClient", FakeAsyncClient)
+
+    records = await DatosGovService().fetch_records(limit=1)
+
+    assert records == [{"departamento": "Antioquia"}]
+    selected = set(captured["$select"].split(","))
+    assert selected == {
+        "departamento",
+        "municipio",
+        "naturaleza",
+        "num_nivel_atencion",
+        "nom_grupo_capacidad",
+        "nom_descripcion_capacidad",
+        "num_cantidad_capacidad_instalada",
+    }
+    assert not selected.intersection(
+        {"c_digo_prestador", "nombre_prestador", "nit_ips", "nom_sede_ips"}
+    )
