@@ -17,6 +17,25 @@ class LatencyMetrics(BaseModel):
     heavy_path_latency_ms: Optional[float] = Field(default=None, description="Tiempo de sintesis del modelo si aplico, en ms")
     total_pipeline_latency_ms: float = Field(description="Tiempo total extremo a extremo en ms")
 
+class LiveTokenResponse(BaseModel):
+    token: str = Field(description="Credencial efímera (auth_tokens/...) que el navegador usa como api key de Live")
+    model: str = Field(description="ID del modelo Live habilitado para la sesión")
+    expires_at: Optional[str] = Field(default=None, description="Vencimiento de la credencial (ISO-8601)")
+    new_session_expires_at: Optional[str] = Field(default=None, description="Plazo para iniciar la sesión (ISO-8601)")
+
+
+class LiveToolRequest(BaseModel):
+    pregunta: str = Field(
+        ..., min_length=1, max_length=1000,
+        description="Pregunta dictada por el usuario, extraída por Gemini Live",
+    )
+
+
+class LiveToolResponse(BaseModel):
+    respuesta: str = Field(description="Respuesta determinista en texto plano para que Live la narre")
+    verificado: bool = Field(default=True, description="True: la cifra salió de SoQL, no del LLM")
+
+
 class QueryResponse(BaseModel):
     query: str
     trigger: IntentTrigger

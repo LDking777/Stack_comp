@@ -38,6 +38,18 @@ class Settings(BaseSettings):
     GEMINI_ROUTER_MODEL: str = "gemini-2.5-flash"
     GEMINI_INSIGHTS_MODEL: str = "gemini-2.5-flash"
 
+    # ── Gemini Live API (voz bidireccional) ──
+    # Credenciales efímeras: requieren el SDK `google-genai` (NO el
+    # `google-generativeai` deprecado que usa llm_client) y la Gemini
+    # Developer API (api key), en `v1alpha`. El nombre del modelo debe ser el
+    # vigente y estar habilitado para la cuenta; se deja configurable para no
+    # tocar código si Google cambia el ID.
+    # IDs documentados actualmente: `gemini-3.8-live` (GA) y
+    # `gemini-2.5-flash-native-audio-preview-12-2025` (guías del SDK).
+    GEMINI_LIVE_MODEL: str = "gemini-3.8-live"
+    GEMINI_LIVE_TOKEN_TTL_MIN: int = 30        # vida del token (default docs)
+    GEMINI_LIVE_NEW_SESSION_TTL_MIN: int = 1   # para iniciar la sesión (default docs)
+
     # ── Timeouts del proveedor (segundos) ──
     # El router corre en cada consulta, pero no puede caerse al fallback por
     # latencia: `gemini-2.5-flash` con thinking habilitado oscila entre 1.5s y

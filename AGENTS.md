@@ -44,7 +44,8 @@ api-service-v2/
 │   │   ├── router_schemas.py   # IntentRouterDecision, QueryIntentParams, IntentTrigger
 │   │   ├── insight_schemas.py  # QualitativeInsightResponse
 │   │   ├── knowledge_schemas.py# KnowledgeContext, KnowledgeEntry
-│   │   └── api_schemas.py      # QueryRequest, QueryResponse, HealthResponse
+│   │   └── api_schemas.py      # QueryRequest, QueryResponse, HealthResponse,
+│   │                           #   LiveTokenResponse, LiveToolRequest, LiveToolResponse
 │   └── services/               # Lógica de negocio (aquí vive el 90% del trabajo)
 │       ├── intent_router.py    # Fast Path: query -> trigger + filtros + operación
 │       ├── datosgov_service.py # SoQL a datos.gov.co (agregación determinista)
@@ -52,11 +53,15 @@ api-service-v2/
 │       ├── insights_service.py # Heavy Path: KPIs -> narrativa
 │       ├── knowledge_service.py# Directrices desde backend/data/knowledge_ips.json
 │       ├── llm_client.py       # Abstracción Gemini/OpenAI/Groq + adaptación de esquemas
-│       └── normalization.py    # Departamentos, naturaleza, nivel, grupo de capacidad
+│       ├── normalization.py    # Departamentos, naturaleza, nivel, grupo de capacidad
+│       └── live_token_service.py # Credenciales efímeras para Gemini Live (voz)
 ├── frontend/                   # React + Vite (desplegado en Vercel)
 │   └── src/
 │       ├── App.jsx             # Topbar + tablero + burbuja de chat
 │       ├── api.js              # Cliente HTTP; API_BASE recorta el "/" final
+│       ├── hooks/
+│       │   └── useGeminiLive.js# Voz bidireccional (Gemini Live) + tool al pipeline
+│       ├── utils/pcmAudio.js   # PCM 16 kHz (in) / 24 kHz (out) vía Web Audio
 │       └── components/
 │           ├── BIDashboard.jsx # KPIs, desgloses por departamento/naturaleza/capacidad
 │           ├── ChatPanel.jsx   # Burbuja flotante NEXO IA
@@ -88,6 +93,16 @@ Este es el recorrido de `POST /api/v1/query`. Si buscas un comportamiento, este 
 5. `backend/schemas/` — el contrato de lo que sale por cada lado.
 
 Para el tablero, entra directo en `backend/main.py` (`GET /api/v1/dashboard`) y salta a `datosgov_service.execute()` (varias operaciones en `asyncio.gather`).
+
+### El recorrido de la voz (Gemini Live)
+
+La voz reutiliza el mismo pipeline determinista; el modelo Live solo narra.
+
+1. `frontend/src/hooks/useGeminiLive.js` — pide permiso de micrófono y luego `getLiveToken()`.
+2. `backend/main.py` (`POST /api/v1/live/token`) → `live_token_service.py` mintea una credencial efímera (`auth_tokens`, `v1alpha`). La `GEMINI_API_KEY` **nunca sale del backend**.
+3. El navegador abre el WebSocket contra Gemini Live con `token.token`, envía PCM 16 kHz y reproduce PCM 24 kHz (`utils/pcmAudio.js`).
+4. Cualquier pregunta con cifras dispara la herramienta `consultar_ips` → `POST /api/v1/live/tool` → `_execute_query()` (mismo pipeline de `POST /api/v1/query`); la respuesta vuelve al modelo vía `sendToolResponse`.
+5. La transcripción se asigna **por turno** (usuario/modelo); no hay diarización acústica.
 
 ---
 
@@ -179,6 +194,7 @@ Al día de hoy el sistema corre sobre **datos.gov.co** (Socrata/SoQL); Supabase 
 - **Knowledge local** del asistente con 8 directrices (capacidad, cobertura, gestión, calidad de datos). Si falta el archivo, el Heavy Path sigue sin directrices.
 - **Preguntas de definición/fuera de dominio con guía.** `intent_router.py` resuelve "¿qué es una IPS?" con un glosario determinista (`_definition_reply`, sin LLM), saludos y capacidades (`_small_talk_reply`) y listados (`_list_intent`).
 - **UI**: tema claro/oscuro persistido (`ThemeContext`) y acento emerald. El chat se llama **NEXO IA**.
+- **Voz con Gemini Live.** El backend mintea credenciales efímeras (`POST /api/v1/live/token`, la `GEMINI_API_KEY` no sale del server) y el navegador conversa por WebSocket (`gemini-3.8-live`). Las preguntas con cifras disparan la herramienta `consultar_ips` → `POST /api/v1/live/tool` → mismo pipeline SoQL. El chat de texto sigue intacto; la transcripción se asigna por turno (sin diarización). **Conexión real verificada** (2026-10-09): token efímero + sesión WebSocket contra `gemini-3.8-live` responden OK.
 
 Pendientes, en orden de impacto:
 
@@ -187,6 +203,7 @@ Pendientes, en orden de impacto:
 3. **Prompt del router y esquema.** El esquema permite combinaciones de trigger/operación poco consistentes. Falta validación cruzada.
 4. **`google.generativeai` deprecado**, migrar a `google.genai`.
 5. **Saludo inicial de `ChatPanel.jsx`**: verifica que se renderice (lleva `text` y no `payload`).
+6. **Gemini Live verificado a nivel de protocolo; falta el audio del navegador.** La cuenta **sí tiene acceso**: `POST /api/v1/live/token` mintea la credencial y una sesión real contra `gemini-3.8-live` se abre y responde (probado 2026-10-09). Falta la prueba de extremo a extremo en el navegador (permiso de micrófono, captura/reproducción PCM y la herramienta `consultar_ips`). Las credenciales efímeras siguen en Preview y solo en Gemini Developer API (`v1alpha`).
 
 El detalle completo de errores corregidos y pendientes vive en las secciones 10 y 11 de `ARQUITECTURA_FLUJO_INTENCIONES.md`. Actualiza esa bitácora al cerrar cada tarea.
 
@@ -205,7 +222,7 @@ Configuración real del servicio en Render (hoy en el dashboard, no sincronizada
 - **Build Command:** `pip install -r requirements.txt`
 - **Start Command:** `uvicorn backend.main:app --host 0.0.0.0 --port $PORT`
 - **Health Check Path:** `/api/v1/health`
-- **Variables:** `LLM_PROVIDER=groq`, modelos Groq y `GROQ_API_KEY` (secretos a mano en el dashboard). Ya no hay variables de Supabase.
+- **Variables:** `LLM_PROVIDER=groq`, modelos Groq y `GROQ_API_KEY` (secretos a mano en el dashboard). Ya no hay variables de Supabase. Para la voz: `GEMINI_API_KEY` (secret, solo backend) y opcional `GEMINI_LIVE_MODEL` (por defecto `gemini-3.8-live`).
 
 En Vercel: `VITE_API_URL=https://stack-comp.onrender.com` sin `/` final, y todo cambio de variable exige redeploy (ver trampa 8).
 
