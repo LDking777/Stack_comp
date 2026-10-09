@@ -3,7 +3,7 @@
 Asistente de BI para usuarios de ventas: preguntas en lenguaje natural, respuestas con cifras verificadas (PostgreSQL/Supabase) y una interpretación narrativa. El LLM nunca calcula números.
 
 - Backend: **FastAPI** + Gemini/Groq/OpenAI, compresión TOON, router de intenciones (Fast/Heavy Path).
-- Frontend: **React + Vite** (tablero KPIs + burbuja de chat).
+- Frontend: **React + Vite** con vistas "Pitch & Innovación" y "Dashboard En Vivo" (réplica de la propuesta hackathon), asistente **NEXO IA** y `ThemeContext` light/dark. UI con **Tailwind vía CDN** (`index.html`); `App.css`/`index.css` quedaron como stubs.
 - Datos: **Supabase** (PostgreSQL), RPCs de agregación.
 
 Documentación completa: [`AGENTS.md`](AGENTS.md) (guía de trabajo) y [`ARQUITECTURA_FLUJO_INTENCIONES.md`](ARQUITECTURA_FLUJO_INTENCIONES.md) (arquitectura y bitácora).
@@ -53,6 +53,8 @@ npm run dev        # http://localhost:3000
 ```
 
 `VITE_API_URL` apunta al backend (por defecto `http://localhost:8000`). La barra final es opcional: `api.js` la recorta.
+
+> La UI se compila con **Tailwind CDN** inyectado en `frontend/index.html`; no requiere `npm install` extra ni paso de build además del de Vite. El nombre provisional del proyecto ("Hackathon Propuesta") está estandarizado en los componentes con comentarios `[NOMBRE PROVISIONAL]` para reemplazo futuro.
 
 ### 3. Pruebas
 
