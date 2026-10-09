@@ -2,37 +2,27 @@ import { ShieldCheck, Target, Lightbulb, MessageSquareText, AlertTriangle } from
 import Markdown from "./Markdown";
 
 const FIELD_LABELS = {
-  pais_filtrado: "País analizado",
-  dispositivo_filtrado: "Dispositivo",
-  total_sesiones: "Sesiones analizadas",
-  total_sesiones_alta_frustracion: "Sesiones con frustración alta",
-  promedio_engagement_score: "Interés promedio",
-  tasa_frustracion_porcentaje: "Tasa de frustración",
-  promedio_duracion_sesion: "Permanencia promedio",
-  promedio_paginas_vistas: "Páginas vistas promedio",
-  total_eventos: "Eventos registrados",
-  tasa_ocupacion_promedio: "Tasa de ocupación promedio",
-  ocupacion_2025: "Ocupación 2025",
-  ocupacion_2026: "Ocupación 2026",
-  variacion_interanual: "Variación interanual",
-  periodo: "Periodo",
-  region: "Región",
-  alucinaciones_numericas: "Verificación LLM",
-  total_perdidas_cancelaciones: "Pérdidas por cancelaciones",
-  tasa_cancelacion: "Tasa de cancelación",
-  canal_critico: "Canal crítico",
-  visitantes_totales: "Visitantes totales",
-  ingresos_estimados: "Ingresos estimados",
-  ocupacion_promedio: "Ocupación promedio",
-  resultado: "Resultado",
-  valor: "Valor",
-  total: "Total",
+  total_registros: "Sedes de IPS",
+  total_prestadores: "IPS distintas",
+  total_grupos: "Grupos",
+  grupo_por: "Agrupado por",
+  total_capacidad: "Capacidad total",
   categoria: "Categoría",
   total_valores: "Valores distintos",
-  valores_distintos: "Listado (con sesiones)",
+  valores_distintos: "Listado (con registros)",
+  operacion: "Operación",
+  metrica: "Métrica",
+  valor: "Resultado",
+  filtros_aplicados: "Filtros aplicados",
+  grupo_capacidad: "Tipo de capacidad",
+  departamento: "Departamento",
+  municipio: "Municipio",
+  naturaleza: "Naturaleza",
+  registros: "Registros",
+  capacidad: "Capacidad",
 };
 
-const SKIP_FIELDS = new Set(["modo", "explicacion_determinista"]);
+const SKIP_FIELDS = new Set(["modo", "status", "detalle"]);
 
 function humanizeKey(key) {
   return FIELD_LABELS[key] ?? key.replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase());
@@ -45,12 +35,8 @@ function humanizeValue(value, key) {
   if (typeof value === "object") return null;
 
   const num = Number(value);
-  if (!Number.isNaN(num) && key) {
-    if (key.includes("porcentaje") || key.includes("pct")) return `${value}%`;
-    if (key.includes("engagement")) return `${Math.round(num * 100)}%`;
-    if (key.includes("duracion") && num > 90) {
-      return `${Math.floor(num / 60)} min ${Math.round(num % 60)} s`;
-    }
+  if (!Number.isNaN(num) && key && (key.startsWith("total") || key === "registros" || key === "capacidad" || key === "valor")) {
+    return num.toLocaleString("es-CO");
   }
   return String(value);
 }
@@ -59,35 +45,66 @@ function VerifiedTag() {
   return (
     <span className="inline-flex items-center gap-1 mt-3 text-[10px] font-mono text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
       <ShieldCheck className="w-3 h-3" />
-      PostgreSQL Verificado
+      Verificado en datos.gov.co (SoQL)
     </span>
   );
 }
 
 function DeterministicAnswer({ kpis }) {
   const entries = Object.entries(kpis || {}).filter(
-    ([key, value]) => !SKIP_FIELDS.has(key) && (typeof value !== "object" || value === null),
+    ([key, value]) =>
+      !SKIP_FIELDS.has(key) &&
+      !(key === "grupos" || key === "filtros_aplicados") &&
+      (typeof value !== "object" || value === null),
   );
 
-  if (entries.length === 0) {
+  const grupos = Array.isArray(kpis?.grupos) ? kpis.grupos : null;
+  const filtros = kpis?.filtros_aplicados;
+
+  if (entries.length === 0 && !grupos) {
     return <p className="text-xs text-slate-500">No se encontraron registros para los filtros especificados.</p>;
   }
 
   return (
     <>
-      <p className="text-xs text-slate-600 dark:text-slate-300 mb-2">Datos verificados directamente desde la base de datos:</p>
-      <div className="grid grid-cols-2 gap-2">
-        {entries.map(([key, value]) => {
-          const display = humanizeValue(value, key);
-          if (display === null) return null;
-          return (
-            <div key={key} className="p-2 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-800 flex flex-col gap-1">
-              <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">{humanizeKey(key)}</span>
-              <span className="text-xs font-mono font-bold text-slate-900 dark:text-white">{display}</span>
-            </div>
-          );
-        })}
-      </div>
+      <p className="text-xs text-slate-600 dark:text-slate-300 mb-2">Datos verificados directamente desde datos.gov.co:</p>
+      {entries.length > 0 && (
+        <div className="grid grid-cols-2 gap-2">
+          {entries.map(([key, value]) => {
+            const display = humanizeValue(value, key);
+            if (display === null) return null;
+            return (
+              <div key={key} className="p-2 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-800 flex flex-col gap-1">
+                <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">{humanizeKey(key)}</span>
+                <span className="text-xs font-mono font-bold text-slate-900 dark:text-white">{display}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {grupos && (
+        <div className="mt-2 space-y-1.5">
+          {grupos.map((g, i) => {
+            const value = g.capacidad ?? g.registros ?? 0;
+            const label = g.valor === null || g.valor === "" ? "Sin clasificar" : g.valor;
+            return (
+              <div key={i} className="flex items-center justify-between text-xs p-2 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-800">
+                <span className="text-slate-600 dark:text-slate-300">{label}</span>
+                <span className="font-mono font-bold text-slate-900 dark:text-white">
+                  {Number(value).toLocaleString("es-CO")}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {filtros && Object.keys(filtros).length > 0 && (
+        <div className="mt-2 text-[10px] font-mono text-slate-400">
+          Filtros: {Object.entries(filtros).map(([k, v]) => `${humanizeKey(k)}=${v}`).join(", ")}
+        </div>
+      )}
     </>
   );
 }
@@ -105,11 +122,11 @@ function InsightAnswer({ insight }) {
         <Markdown text={insight.executive_summary} />
       </div>
 
-      {insight.sentiment_and_friction_analysis && (
+      {insight.coverage_and_capacity_analysis && (
         <div className="p-3 rounded-xl bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-100 dark:border-indigo-800/50 flex gap-2.5 text-indigo-900 dark:text-indigo-200">
           <MessageSquareText className="w-4 h-4 shrink-0 mt-0.5" />
           <div className="text-xs leading-relaxed">
-            <Markdown text={insight.sentiment_and_friction_analysis} />
+            <Markdown text={insight.coverage_and_capacity_analysis} />
           </div>
         </div>
       )}

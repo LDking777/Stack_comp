@@ -1,0 +1,74 @@
+[
+  {
+    "id": 1,
+    "trigger_key": "camas",
+    "categoria": "capacidad",
+    "ambito": "GLOBAL",
+    "directriz": "Al analizar camas, distingue por nivel de atención y naturaleza: una alta dotación privada no implica cobertura pública suficiente para la población.",
+    "criterios_evidencia": "sum(num_cantidad_capacidad_instalada) con nom_grupo_capacidad='CAMAS', desglosado por naturaleza o nivel de atención.",
+    "prioridad": 2
+  },
+  {
+    "id": 2,
+    "trigger_key": "capacidad instalada",
+    "categoria": "capacidad",
+    "ambito": "GLOBAL",
+    "directriz": "Compara la capacidad por tipo de unidad (CAMAS, CONSULTORIOS, SALAS, AMBULANCIAS, CAMILLAS) antes de concluir sobre infraestructura en salud.",
+    "criterios_evidencia": "Total de capacidad instalada por nom_grupo_capacidad.",
+    "prioridad": 2
+  },
+  {
+    "id": 3,
+    "trigger_key": "nivel de atencion",
+    "categoria": "cobertura",
+    "ambito": "GLOBAL",
+    "directriz": "Interpreta 1 = primaria, 2 = medio, 3 = alto: un territorio con muchas IPS de nivel 1 y pocas de nivel 3 tiene baja complejidad resolutiva.",
+    "criterios_evidencia": "Conteo de registros agrupado por num_nivel_atencion.",
+    "prioridad": 1
+  },
+  {
+    "id": 4,
+    "trigger_key": "publica",
+    "categoria": "gestion",
+    "ambito": "GLOBAL",
+    "directriz": "Separa siempre IPS públicas y privadas: la razón público/privado explica la capacidad en territorios donde el Estado es el único oferente.",
+    "criterios_evidencia": "Conteo y capacidad agrupados por naturaleza (Pública, Privada, Mixta).",
+    "prioridad": 1
+  },
+  {
+    "id": 5,
+    "trigger_key": "departamento",
+    "categoria": "cobertura",
+    "ambito": "GLOBAL",
+    "directriz": "Al comparar departamentos, no conviertas conteos absolutos en cobertura per cápita: el dataset no trae población. Habla de concentración, no de suficiencia.",
+    "criterios_evidencia": "Conteo de registros por departamento.",
+    "prioridad": 3
+  },
+  {
+    "id": 6,
+    "trigger_key": "municipio",
+    "categoria": "cobertura",
+    "ambito": "GLOBAL",
+    "directriz": "El detalle municipal expone desiertos de atención que el agregado departamental oculta; úsalo cuando la pregunta sea territorial.",
+    "criterios_evidencia": "Conteo de registros por municipio.",
+    "prioridad": 3
+  },
+  {
+    "id": 7,
+    "trigger_key": "prestador",
+    "categoria": "calidad_datos",
+    "ambito": "GLOBAL",
+    "directriz": "Un prestador puede tener varias sedes y cada sede varias capacidades: no confundas el número de registros con el número de IPS.",
+    "criterios_evidencia": "count(distinct c_digo_prestador) versus count(*) de filas.",
+    "prioridad": 2
+  },
+  {
+    "id": 8,
+    "trigger_key": "reps",
+    "categoria": "calidad_datos",
+    "ambito": "GLOBAL",
+    "directriz": "Los datos vienen del REPS con corte de noviembre de 2022: adviértelo al recomendar acciones que dependan de la vigencia de la oferta.",
+    "criterios_evidencia": "Metadato data_updated_at de la fuente.",
+    "prioridad": 3
+  }
+]
