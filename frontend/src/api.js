@@ -175,12 +175,28 @@ async function askLiveTool(pregunta) {
   return res.json();
 }
 
+async function getWhatsAppConfig() {
+  const res = await fetch(`${API_BASE}/api/v1/whatsapp/config`);
+  if (!res.ok) {
+    throw new Error(
+      `El backend respondió ${res.status} al cargar WhatsApp.`
+    );
+  }
+  return res.json();
+}
+
+function getWhatsAppWebhookUrl() {
+  return `${API_BASE}/api/v1/whatsapp/webhook`;
+}
+
 export {
   getDashboard,
   askNexo,
   getHealth,
   getLiveToken,
   askLiveTool,
+  getWhatsAppConfig,
+  getWhatsAppWebhookUrl,
   uploadDocument,
   listDocuments,
   clearSessionMemory,

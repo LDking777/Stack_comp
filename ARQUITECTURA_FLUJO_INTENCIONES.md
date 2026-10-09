@@ -417,6 +417,7 @@ evios.11. **El azul sobrevivía en el resto de la web.** El tema monocromo origi
 20. **Chat persistente junto al avatar en la portada.** Se movió el `ChatPanel` a la columna derecha de `/`, al lado del avatar cuadrado a la izquierda; ya no hay burbuja flotante en esa ruta. `/dashboard` conserva el widget flotante. En pantallas estrechas, las columnas se apilan y el área de mensajes mantiene scroll propio. Verificado con `npm run build` y `npm run lint`; lint conserva advertencias previas no bloqueantes.
 21. **Portada desbordada y avatar pequeño.** La altura mínima fija provocaba desborde y el límite del avatar no aprovechaba el espacio libre. La portada desktop usa el alto dinámico del viewport y escala la imagen hasta 520 px según espacio; tablet/móvil compacta identidad y chat, con avatar hasta 300 px en tablet y 190 px en teléfonos. Se ajusta también la altura del chat móvil para conservar el área de conversación dentro del viewport habitual.
 22. **Prototipo de avatar vocal descartado.** Se probó un overlay animado de boca sincronizado de forma aproximada con la salida de audio; tras la revisión visual, se retiró porque no se veía bien. La portada mantiene el avatar estático y la conversación de voz no depende de animación.
+23. **Webhook de WhatsApp endurecido antes de incorporarlo.** Se añadió verificación HMAC-SHA256 del cuerpo con el secreto de aplicación de Meta y comparación constante del token de handshake. No se registran el token de verificación ni el texto de las consultas; los eventos inválidos se rechazan antes de ejecutar el pipeline.
 
 ### 10.2. Pendientes
 
@@ -463,6 +464,7 @@ evios.11. **El azul sobrevivía en el resto de la web.** El tema monocromo origi
 31. **Prototipo de animación vocal del avatar descartado.** Se probó una boca superpuesta sincronizada de forma aproximada al audio Gemini Live, pero el usuario pidió retirarla porque no se veía bien. La portada vuelve a mostrar el avatar estático; la conversación y reproducción de voz siguen funcionando igual. Se conserva la corrección del reproductor PCM para detener las fuentes de audio activas al interrumpir.
 32. **Transcripción de voz ausente del historial del chat.** Gemini ya enviaba la transcripción de salida, pero solo se mostraba temporalmente; al terminar el turno se agregaba al historial únicamente la respuesta de la herramienta de datos. Ahora el hook acumula la transcripción completa y la agrega al historial junto con la intervención del usuario. Si no llega transcripción de salida, usa la respuesta verificada de la herramienta como respaldo. El historial existente en localStorage conserva estos mensajes igual que los demás.
 33. **Análisis ampliado por descripción de capacidad, sin consultas identificables.** La fuente oficial `s2ru-bqt6` confirma dimensiones analíticas de grupo y descripción de capacidad, además de territorio, naturaleza y nivel. Se añadió filtro/desglose exacto por `nom_descripcion_capacidad` (pediátrica, urgencias, cirugía, neonatal, salud mental, entre otras); el fallback reconoce subtipos comunes. El servicio valida columnas permitidas y rechaza filtros/desgloses por códigos, nombres o NIT. Las muestras que reciben el LLM y el dashboard seleccionan solo columnas analíticas; la tabla de dashboard se centra en ubicación, nivel, grupo, descripción y cantidad, no nombres de prestadores/sedes. El conteo agregado de IPS se conserva.
+34. **Integración WhatsApp aislada sobre el pipeline IPS.** Se portó solo el canal Cloud API; no se incorporaron el dashboard cognitivo, los cambios de voz/RAG ni el generador PDF del push de `developer`. Las rutas GET/POST validan configuración, handshake y firma Meta; la respuesta reutiliza `_execute_query()` con sesión por remitente. El frontend muestra el enlace y ejemplos únicamente agregados, y construye la URL del webhook desde `VITE_API_URL`. Se añadieron pruebas para handshake, rechazo de firmas inválidas, extracción robusta y respuesta. Falta configurar y verificar una cuenta real de Meta en producción.
 
 ### 11.2. Pendiente de confirmacion
 
@@ -533,3 +535,26 @@ Capa añadida sobre el pipeline determinista; **no lo reemplaza**. El modelo Liv
 - Cuenta con acceso Live **verificado** (token efímero + sesión WebSocket real contra `gemini-3.8-live`, 2026-10-09). Las credenciales efímeras siguen en Preview, solo Developer API.
 - **Sin diarización**: el hablante se infiere por turno, no por acústica.
 - El modelo por defecto es `gemini-3.8-live`, configurable con `GEMINI_LIVE_MODEL`; la alternativa documentada es `gemini-2.5-flash-native-audio-preview-12-2025`. Verificar la disponibilidad del modelo antes de afirmarla.
+
+---
+
+## 14. WhatsApp (Meta Cloud API)
+
+Canal opcional que reutiliza el pipeline analítico existente; no calcula ni expone identificadores individuales de IPS.
+
+### 14.1. Endpoints y seguridad
+
+- `GET /api/v1/whatsapp/webhook` — handshake de Meta: compara `hub.verify_token` con `WHATSAPP_VERIFY_TOKEN`.
+- `POST /api/v1/whatsapp/webhook` — verifica `X-Hub-Signature-256` como HMAC-SHA256 del cuerpo con `WHATSAPP_APP_SECRET` antes de analizar mensajes. Eventos de otros objetos o JSON malformado se rechazan.
+- `GET /api/v1/whatsapp/config` — expone el número/enlace público y banderas de disponibilidad; nunca revela credenciales.
+- Las respuestas usan `_execute_query(user_query, session_id="wa_{sender}")` y se envían a Meta Cloud API. El procesamiento se agrega a las tareas en segundo plano de FastAPI para responder el webhook sin esperar al pipeline.
+
+### 14.2. Configuración
+
+Configurar únicamente en el backend: `WHATSAPP_ENABLED=true`, `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_VERIFY_TOKEN`, `WHATSAPP_APP_SECRET` y `WHATSAPP_PHONE_NUMBER`. Registrar en Meta la URL `https://<API_BASE>/api/v1/whatsapp/webhook` y el mismo token de verificación.
+
+### 14.3. Frontend y límites
+
+- El modal se muestra solo cuando el backend confirma la configuración completa; los enlaces apuntan a `VITE_API_URL`, no al dominio del frontend.
+- Las preguntas sugeridas consultan totales o agregados por ubicación, capacidad y naturaleza. No se ofrecen búsquedas por nombre, código o NIT.
+- La entrega se procesa en tareas en memoria del proceso API: aún no hay cola durable ni prueba de extremo a extremo con credenciales reales de Meta.
