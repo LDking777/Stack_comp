@@ -55,10 +55,12 @@ export function useGeminiLive(options = {}) {
   const sendPartsRef = useRef([]);
   const sendBytesRef = useRef(0);
   const inputBufferRef = useRef("");
+  const outputBufferRef = useRef("");
   const pendingAnswerRef = useRef(null);
 
   const resetTurn = useCallback(() => {
     inputBufferRef.current = "";
+    outputBufferRef.current = "";
     pendingAnswerRef.current = null;
     setUserText("");
     setModelText("");
@@ -173,22 +175,29 @@ export function useGeminiLive(options = {}) {
           }
 
           const outputText = content.outputTranscription?.text;
-          if (outputText) setModelText((prev) => prev + outputText);
+          if (outputText) {
+            outputBufferRef.current += outputText;
+            setModelText(outputBufferRef.current);
+          }
 
           const parts = content.modelTurn?.parts || [];
           for (const part of parts) {
             const data = part?.inlineData?.data || part?.inline_data?.data;
-            if (data) playerRef.current?.play(data);
+            if (data) {
+              playerRef.current?.play(data);
+            }
           }
 
-          if (content.interrupted) playerRef.current?.interrupt();
+          if (content.interrupted) {
+            playerRef.current?.interrupt();
+          }
 
           if (content.turnComplete || content.generationComplete) {
             const spoken = inputBufferRef.current.trim();
             if (spoken) optionsRef.current.onUserUtterance?.(spoken);
-            if (pendingAnswerRef.current) {
-              optionsRef.current.onAssistantAnswer?.(pendingAnswerRef.current);
-            }
+            const assistantText =
+              outputBufferRef.current.trim() || pendingAnswerRef.current?.trim();
+            if (assistantText) optionsRef.current.onAssistantAnswer?.(assistantText);
             resetTurn();
           }
         }

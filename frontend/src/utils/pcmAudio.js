@@ -105,6 +105,7 @@ export function createPcmPlayer({ sampleRate = 24000 } = {}) {
   const Ctx = audioContextCtor();
   const context = new Ctx({ sampleRate });
   let cursor = 0;
+  const sources = new Set();
 
   const play = (base64) => {
     const bytes = base64ToBytes(base64);
@@ -118,13 +119,22 @@ export function createPcmPlayer({ sampleRate = 24000 } = {}) {
     const source = context.createBufferSource();
     source.buffer = buffer;
     source.connect(context.destination);
+    sources.add(source);
+    source.onended = () => sources.delete(source);
     const startAt = Math.max(context.currentTime, cursor);
     source.start(startAt);
     cursor = startAt + buffer.duration;
   };
 
   const interrupt = () => {
-    // Reinicia la cola: la respuesta actual quedó obsoleta por barge-in.
+    for (const source of sources) {
+      try {
+        source.stop();
+      } catch {
+        /* la fuente ya terminó */
+      }
+    }
+    sources.clear();
     cursor = context.currentTime;
   };
 
@@ -133,6 +143,7 @@ export function createPcmPlayer({ sampleRate = 24000 } = {}) {
     interrupt,
     resume: () => context.resume().catch(() => {}),
     async stop() {
+      interrupt();
       cursor = 0;
       try {
         await context.close();

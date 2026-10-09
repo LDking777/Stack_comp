@@ -66,7 +66,7 @@ api-service-v2/
 │       ├── api.js              # Cliente HTTP; API_BASE recorta el "/" final
 │       ├── pages/HomePage.jsx  # Portada con avatar cuadrado y chat persistente
 │       ├── hooks/
-│       │   └── useGeminiLive.js# Voz bidireccional (Gemini Live) + tool al pipeline
+│       │   └── useGeminiLive.js# Voz bidireccional con Gemini Live
 │       ├── utils/pcmAudio.js   # PCM 16 kHz (in) / 24 kHz (out) vía Web Audio
 │       └── components/
 │           ├── BIDashboard.jsx # KPIs, desgloses por departamento/naturaleza/capacidad
@@ -109,7 +109,7 @@ La voz reutiliza el mismo pipeline determinista; el modelo Live solo narra.
 2. `backend/main.py` (`POST /api/v1/live/token`) → `live_token_service.py` mintea una credencial efímera (`auth_tokens`, `v1alpha`). La `GEMINI_API_KEY` **nunca sale del backend**.
 3. El navegador abre el WebSocket contra Gemini Live con `token.token`, envía PCM 16 kHz y reproduce PCM 24 kHz (`utils/pcmAudio.js`).
 4. Cualquier pregunta con cifras dispara la herramienta `consultar_ips` → `POST /api/v1/live/tool` → `_execute_query()` (mismo pipeline de `POST /api/v1/query`); la respuesta vuelve al modelo vía `sendToolResponse`.
-5. La transcripción se asigna **por turno** (usuario/modelo); no hay diarización acústica.
+5. Al completar cada turno, las transcripciones del usuario y de la respuesta hablada se agregan al historial visible del chat; no hay diarización acústica. Si Gemini no entrega transcripción de salida, se muestra como respaldo la respuesta verificada de la herramienta.
 
 ---
 
@@ -204,7 +204,7 @@ Los KPIs siguen viniendo exclusivamente de **datos.gov.co** (Socrata/SoQL). Supa
 - **UI**: tema claro/oscuro persistido (`ThemeContext`) y acento emerald. El chat se llama **NEXO IA**.
 - **Rutas principales**: `/` es la portada con el avatar cuadrado grande a la izquierda y el chat persistente a la derecha; en escritorio el avatar escala por ancho y altura disponibles, y en móvil compacto mantiene más espacio visual sin desbordar el encabezado. Tablet/móvil mantiene scroll natural si el contenido excede el alto. `/dashboard` conserva el tablero analítico anterior y el chat flotante. El header permite navegar entre ambas. El usuario inicia el micrófono explícitamente desde el control de voz.
 - **Memoria y documentos por sesión**: `supabase_mvp.sql` crea tablas con RLS, búsqueda pgvector y bucket privado. El backend persiste historial, fragmentos, embeddings y archivo original; el frontend conserva el `session_id` y el historial visible local. Embeddings con Gemini y el prompt RAG limitan documentos/preguntas al dominio IPS/salud de Colombia. Requiere ejecutar el SQL y configurar `SUPABASE_URL`, `SUPABASE_SECRET_KEY` (o `SUPABASE_SERVICE_ROLE_KEY`) y `GEMINI_API_KEY` en el backend. La conexión real de DB, búsqueda y limpieza se probó el 2026-10-09 con contenido sintético temporal.
-- **Voz con Gemini Live.** El backend mintea credenciales efímeras (`POST /api/v1/live/token`, la `GEMINI_API_KEY` no sale del server) y el navegador conversa por WebSocket (`gemini-3.8-live`). Las preguntas con cifras disparan la herramienta `consultar_ips` → `POST /api/v1/live/tool` → mismo pipeline SoQL. El chat de texto sigue intacto; la transcripción se asigna por turno (sin diarización). **Conexión real verificada** (2026-10-09): token efímero + sesión WebSocket contra `gemini-3.8-live` responden OK.
+- **Voz con Gemini Live.** El backend mintea credenciales efímeras (`POST /api/v1/live/token`, la `GEMINI_API_KEY` no sale del server) y el navegador conversa por WebSocket (`gemini-3.8-live`). Las preguntas con cifras disparan la herramienta `consultar_ips` → `POST /api/v1/live/tool` → mismo pipeline SoQL. El chat de texto sigue intacto; al completar cada turno, las transcripciones del usuario y de la respuesta hablada se agregan al historial visible y persistente del chat. Si Gemini no entrega transcripción de salida, se muestra como respaldo la respuesta verificada de la herramienta. No hay diarización acústica. El avatar de portada permanece estático durante la conversación. **Conexión real verificada** (2026-10-09): token efímero + sesión WebSocket contra `gemini-3.8-live` responden OK.
 
 Pendientes, en orden de impacto:
 
