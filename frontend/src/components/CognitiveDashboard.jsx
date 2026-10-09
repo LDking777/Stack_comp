@@ -12,8 +12,16 @@ import {
   parseUploadedDocument, queryDocumentKnowledge 
 } from '../services/documentKnowledge';
 import { speechEngine, analyzeCognitiveSentiment } from '../utils/speechVoiceEngine';
+import { askNexo } from '../api';
 
-export default function CognitiveDashboard({ sidebarOpen, setSidebarOpen, onOpenPitch }) {
+export default function CognitiveDashboard({ 
+  sidebarOpen, 
+  setSidebarOpen, 
+  onOpenPitch,
+  onAskAI,
+  initialQuestion,
+  onClearInitialQuestion
+}) {
   // Estados de datos e ingesta
   const [dataset, setDataset] = useState(DEFAULT_IPS_DATA);
   const [activeBrief, setActiveBrief] = useState(INITIAL_DOCUMENT_BRIEF);
@@ -24,6 +32,7 @@ export default function CognitiveDashboard({ sidebarOpen, setSidebarOpen, onOpen
   // Estados de voz y conversación
   const [isListening, setIsListening] = useState(false);
   const [ttsEnabled, setTtsEnabled] = useState(true);
+  const [isThinking, setIsThinking] = useState(false);
   const [sttInterim, setSttInterim] = useState("");
   const [inputText, setInputText] = useState("");
   const [dialogueStream, setDialogueStream] = useState([
@@ -119,9 +128,17 @@ export default function CognitiveDashboard({ sidebarOpen, setSidebarOpen, onOpen
     }
   };
 
-  // Procesar una pregunta (vocal o escrita)
-  const handleExecuteQuestion = (questionText, inputLatency = 290) => {
-    if (!questionText.trim()) return;
+  useEffect(() => {
+    if (initialQuestion) {
+      setActiveTab("consola");
+      handleExecuteQuestion(initialQuestion);
+      onClearInitialQuestion?.();
+    }
+  }, [initialQuestion]);
+
+  // Procesar una pregunta (vocal o escrita) integrando la IA de Nexo
+  const handleExecuteQuestion = async (questionText, inputLatency = 290) => {
+    if (!questionText || !questionText.trim() || isThinking) return;
 
     playTone('click');
     const now = new Date();
@@ -146,37 +163,102 @@ export default function CognitiveDashboard({ sidebarOpen, setSidebarOpen, onOpen
     setDialogueStream(prev => [...prev, juradoTurn]);
     setInputText("");
     setSttInterim("");
+    setIsThinking(true);
 
-    // 2. Ejecutar inferencia RAG sobre el documento
-    const ttsStart = performance.now();
-    const botResponse = queryDocumentKnowledge(questionText, dataset, customDoc);
-    const agentAnalysis = analyzeCognitiveSentiment(botResponse.answer, 'agente');
+    const startTime = performance.now();
+    let botAnswer = "";
+    let isOutOfDomain = false;
+    let confidence = 0.98;
+    let emotion = "Confianza Factual";
+    let sentiment = "Positivo";
 
-    setTimeout(() => {
-      const agentTimeCode = new Date().toLocaleTimeString("es-CO", { minute: "2-digit", second: "2-digit" }) + `.${String(new Date().getMilliseconds()).padStart(3, '0')}`;
-      const botTurn = {
-        id: `turn-agent-${Date.now()}`,
-        speaker: "agente",
-        speakerLabel: "Hablante 2 (Agente Vocal)",
-        text: botResponse.answer,
-        timestamp: agentTimeCode,
-        emotion: botResponse.emotion,
-        confidence: botResponse.confidence,
-        sentiment: botResponse.sentiment,
-        outOfDomain: botResponse.outOfDomain
-      };
+    try {
+      // Si el jurado cargó un documento sorpresa personalizado en memoria
+      if (customDoc && customDoc.rawContent) {
+        const customRes = queryDocumentKnowledge(questionText, dataset, customDoc);
+        botAnswer = customRes.answer;
+        isOutOfDomain = customRes.outOfDomain;
+        confidence = customRes.confidence;
+        emotion = customRes.emotion;
+        sentiment = customRes.sentiment;
+      } else {
+        // Consultar el pipeline real de Nexo IA (SoQL + LLM Groq / Gemini)
+        let res;
+        if (onAskAI) {
+          const aiCall = await onAskAI(questionText);
+          res = aiCall.ok ? aiCall.data : null;
+        } else {
+          res = await askNexo(questionText);
+        }
 
-      setDialogueStream(prev => [...prev, botTurn]);
-      setCurrentEmotions(agentAnalysis.emotions);
-
-      const ttsLatency = Math.round(performance.now() - ttsStart);
-      setLatencies({ stt: inputLatency, tts: ttsLatency > 0 ? ttsLatency : 210 });
-
-      // Reproducción vocal si TTS está activo
-      if (ttsEnabled) {
-        speechEngine.speakText(botResponse.answer);
+        if (res && res.answer) {
+          botAnswer = res.answer;
+          confidence = typeof res.confidence_score === "number" ? res.confidence_score : 0.98;
+          if (res.trigger === "out_of_domain") {
+            isOutOfDomain = true;
+            emotion = "Neutralidad Analítica";
+            sentiment = "Neutro";
+          } else if (res.trigger === "greeting") {
+            emotion = "Apertura Colaborativa";
+            sentiment = "Positivo";
+          } else if (res.kpis && Object.keys(res.kpis).length > 0) {
+            emotion = "Precisión SoQL";
+            sentiment = "Positivo";
+          }
+        } else {
+          // Fallback a motor documental local si el backend no devolvió respuesta
+          const fallbackRes = queryDocumentKnowledge(questionText, dataset, customDoc);
+          botAnswer = fallbackRes.answer;
+          isOutOfDomain = fallbackRes.outOfDomain;
+          confidence = fallbackRes.confidence;
+          emotion = fallbackRes.emotion;
+          sentiment = fallbackRes.sentiment;
+        }
       }
-    }, 180);
+    } catch (err) {
+      console.warn("Fallo temporal en consulta IA, recurriendo a motor local:", err);
+      const fallbackRes = queryDocumentKnowledge(questionText, dataset, customDoc);
+      botAnswer = fallbackRes.answer;
+      isOutOfDomain = fallbackRes.outOfDomain;
+      confidence = fallbackRes.confidence;
+      emotion = fallbackRes.emotion;
+      sentiment = fallbackRes.sentiment;
+    } finally {
+      setIsThinking(false);
+    }
+
+    const agentAnalysis = analyzeCognitiveSentiment(botAnswer, 'agente');
+    const agentTimeCode = new Date().toLocaleTimeString("es-CO", { minute: "2-digit", second: "2-digit" }) + `.${String(new Date().getMilliseconds()).padStart(3, '0')}`;
+
+    const botTurn = {
+      id: `turn-agent-${Date.now()}`,
+      speaker: "agente",
+      speakerLabel: "Hablante 2 (Agente Vocal)",
+      text: botAnswer,
+      timestamp: agentTimeCode,
+      emotion: emotion || agentAnalysis.label,
+      confidence: confidence,
+      sentiment: sentiment || agentAnalysis.sentiment,
+      outOfDomain: isOutOfDomain
+    };
+
+    setDialogueStream(prev => [...prev, botTurn]);
+    setCurrentEmotions(agentAnalysis.emotions);
+
+    const elapsed = Math.round(performance.now() - startTime);
+    setLatencies({ stt: inputLatency, tts: elapsed > 0 ? elapsed : 190 });
+
+    // Reproducción vocal si TTS está activo
+    if (ttsEnabled && botAnswer) {
+      const cleanVoiceText = botAnswer.replace(/[*#_`>]/g, "").trim();
+      speechEngine.speakText(cleanVoiceText);
+    }
+  };
+
+  const handleAskAboutIps = (ips) => {
+    setActiveTab("consola");
+    playTone('click');
+    handleExecuteQuestion(`¿Qué capacidad instalada y nivel de atención tiene ${ips.nombre_prestador} en ${ips.municipio}?`);
   };
 
   // Toggle de reconocimiento por voz
@@ -355,10 +437,10 @@ export default function CognitiveDashboard({ sidebarOpen, setSidebarOpen, onOpen
                       <td className="py-2.5 text-right font-mono">{ips.quirofanos}</td>
                       <td className="py-2.5 text-center">
                         <button 
-                          onClick={() => handleExecuteQuestion(`¿Qué servicios y capacidad tiene ${ips.nombre_prestador}?`)}
+                          onClick={() => handleAskAboutIps(ips)}
                           className="px-2 py-1 rounded bg-slate-100 dark:bg-slate-800 hover:bg-emerald-500 hover:text-white text-[10px] font-medium transition-colors"
                         >
-                          Preguntar
+                          Preguntar a IA
                         </button>
                       </td>
                     </tr>
@@ -428,6 +510,23 @@ export default function CognitiveDashboard({ sidebarOpen, setSidebarOpen, onOpen
                   </div>
                 </div>
               ))}
+
+              {/* Indicador de procesamiento cognitivo de Nexo IA */}
+              {isThinking && (
+                <div className="flex gap-3 max-w-2xl animate-in fade-in duration-200">
+                  <div className="w-8 h-8 rounded-full bg-emerald-600 text-white flex items-center justify-center font-bold text-xs shrink-0 shadow-sm animate-pulse">
+                    <Bot className="w-4 h-4" />
+                  </div>
+                  <div className="p-4 rounded-2xl bg-emerald-50/80 dark:bg-emerald-950/40 border border-emerald-200/80 dark:border-emerald-800/80 text-emerald-900 dark:text-emerald-200 text-xs rounded-tl-none flex items-center gap-3">
+                    <span className="flex gap-1">
+                      <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-bounce"></span>
+                      <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></span>
+                      <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></span>
+                    </span>
+                    <span className="font-mono text-[11px] font-medium">Nexo IA consultando dataset oficial de IPS (SoQL) y sintetizando respuesta...</span>
+                  </div>
+                </div>
+              )}
 
               {/* Transcripción provisional en curso */}
               {sttInterim && (

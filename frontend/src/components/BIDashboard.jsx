@@ -1,4 +1,5 @@
-import { BarChart3, Map, Layers, Building2, Database, RefreshCw, ChevronRight, Activity, BedDouble, GitBranch } from "lucide-react";
+import { useState } from "react";
+import { BarChart3, Map, Layers, Building2, Database, RefreshCw, ChevronRight, Activity, BedDouble, GitBranch, Sparkles, Send, Mic } from "lucide-react";
 import { playTone } from "../utils/soundEffects";
 import { showToast } from "./ToastContainer";
 import { useCountUp } from "../hooks/useCountUp";
@@ -78,7 +79,8 @@ function BreakdownCard({ title, subtitle, items, valueKey, color, onInspect, que
   );
 }
 
-export default function BIDashboard({ data, loading, error, onRetry, onInspect, sidebarOpen, setSidebarOpen }) {
+export default function BIDashboard({ data, loading, error, onRetry, onInspect, onVoiceInspect, sidebarOpen, setSidebarOpen }) {
+  const [quickQ, setQuickQ] = useState("");
   const kpis = data?.kpis || {};
   const byDepartamento = data?.by_departamento || [];
   const byNaturaleza = data?.by_naturaleza || [];
@@ -163,6 +165,89 @@ export default function BIDashboard({ data, loading, error, onRetry, onInspect, 
 
         {data && (
           <>
+            {/* Sección Integrada de Conversación con Nexo IA */}
+            <div className="mb-6 p-5 rounded-2xl bg-gradient-to-r from-emerald-500/10 via-teal-500/5 to-slate-100/50 dark:to-slate-900/50 border border-emerald-500/25 shadow-sm">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-600 to-teal-500 text-white flex items-center justify-center font-bold shadow-md shadow-emerald-600/20">
+                    <Sparkles className="w-5 h-5 text-amber-300" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                      Conversación Inteligente con Nexo IA
+                      <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 font-semibold border border-emerald-500/30">
+                        SoQL + LLM
+                      </span>
+                    </h3>
+                    <p className="text-xs text-slate-500 dark:text-slate-400">
+                      Pregunta en lenguaje natural sobre cualquier indicador o cruce de datos del tablero.
+                    </p>
+                  </div>
+                </div>
+
+                {onVoiceInspect && (
+                  <button
+                    onClick={() => { playTone("high"); onVoiceInspect("¿Cuáles son los principales hallazgos de capacidad de IPS en Colombia?"); }}
+                    className="px-3.5 py-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:border-emerald-500 text-xs font-semibold text-slate-700 dark:text-slate-200 flex items-center gap-2 shadow-sm transition-all shrink-0 hover:text-emerald-500"
+                  >
+                    <Mic className="w-4 h-4 text-emerald-500" />
+                    <span>Preguntar por Voz en Consola</span>
+                  </button>
+                )}
+              </div>
+
+              {/* Input interactivo integrado */}
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (!quickQ.trim()) return;
+                  playTone("click");
+                  onInspect(quickQ);
+                  setQuickQ("");
+                }}
+                className="mt-4 flex items-center gap-2"
+              >
+                <div className="relative flex-1">
+                  <input
+                    type="text"
+                    value={quickQ}
+                    onChange={(e) => setQuickQ(e.target.value)}
+                    placeholder="Escribe tu consulta sobre el tablero (ej: ¿Por qué Antioquia tiene tantas camas?)..."
+                    className="w-full px-4 py-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500 shadow-inner"
+                  />
+                  <button
+                    type="submit"
+                    className="absolute right-1.5 top-1.5 p-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white transition-colors"
+                    title="Consultar a Nexo IA"
+                  >
+                    <Send className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </form>
+
+              {/* Chips de Preguntas Rápidas */}
+              <div className="mt-3 flex flex-wrap items-center gap-1.5">
+                <span className="text-[10px] font-mono text-slate-400 uppercase font-semibold mr-1">
+                  Consultas recomendadas:
+                </span>
+                {[
+                  "¿Por qué Bogotá y Antioquia concentran la mayor capacidad?",
+                  "¿Cuál es el porcentaje de IPS públicas vs privadas?",
+                  "¿Qué departamentos tienen déficit de camas de Nivel 3?",
+                  "¿Cuál es el promedio de camas por prestador en Colombia?"
+                ].map((promptText, idx) => (
+                  <button
+                    key={idx}
+                    onClick={() => { playTone("click"); onInspect(promptText); }}
+                    className="text-[11px] px-2.5 py-1 rounded-lg bg-white/90 dark:bg-slate-900/90 hover:bg-emerald-500/10 hover:text-emerald-600 dark:hover:text-emerald-400 border border-slate-200/80 dark:border-slate-800 text-slate-700 dark:text-slate-300 font-medium transition-all text-left flex items-center gap-1 group shadow-xs"
+                  >
+                    <span>{promptText}</span>
+                    <ChevronRight className="w-3 h-3 text-slate-400 group-hover:text-emerald-500" />
+                  </button>
+                ))}
+              </div>
+            </div>
+
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-4 mb-4">
               <KpiCard label="Sedes de IPS" value={kpis.total_registros} hint="registros REPS" icon={Database} onInspect={onInspect} question="¿Cuántas sedes de IPS hay en Colombia?" />
               <KpiCard label="Prestadores (IPS)" value={kpis.total_prestadores} hint="IPS distintas" icon={Building2} onInspect={onInspect} question="¿Cuántos prestadores de salud hay en Colombia?" />

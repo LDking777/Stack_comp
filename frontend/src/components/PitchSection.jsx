@@ -2,7 +2,16 @@ import React from 'react';
 import { Award, Play, Mic, Radio, Volume2, Database, ShieldCheck, Cpu, Clock, MessageSquareQuote, Sparkles, CheckCircle2 } from 'lucide-react';
 import { playTone } from '../utils/soundEffects';
 
-export default function PitchSection({ onExploreDashboard }) {
+export default function PitchSection({ onExploreDashboard, onExploreWithQuestion }) {
+  const handleTryQuestion = (q) => {
+    playTone('click');
+    if (onExploreWithQuestion) {
+      onExploreWithQuestion(q);
+    } else if (onExploreDashboard) {
+      onExploreDashboard();
+    }
+  };
+
   return (
     <div id="view-pitch" className="w-full flex flex-col transition-all duration-300">
       
@@ -100,6 +109,26 @@ export default function PitchSection({ onExploreDashboard }) {
             <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
               El agente sintetiza el Briefing y sugiere entre 3 y 5 preguntas. El jurado hace 3 preguntas por voz: resumen, detalle fino y una fuera del documento para medir honestidad técnica.
             </p>
+            <div className="mt-3 pt-2.5 border-t border-slate-100 dark:border-slate-800 flex flex-wrap gap-1.5">
+              <button
+                onClick={() => handleTryQuestion("Explícame de qué trata este dataset y qué contiene")}
+                className="text-[11px] px-2.5 py-1 rounded-lg bg-amber-500/10 text-amber-700 dark:text-amber-400 font-medium hover:bg-amber-500 hover:text-white transition-colors"
+              >
+                Probar: Resumen General
+              </button>
+              <button
+                onClick={() => handleTryQuestion("¿Cuántas camas de UCI y quirófanos hay en Caldas y Antioquia?")}
+                className="text-[11px] px-2.5 py-1 rounded-lg bg-amber-500/10 text-amber-700 dark:text-amber-400 font-medium hover:bg-amber-500 hover:text-white transition-colors"
+              >
+                Probar: Detalle Factual
+              </button>
+              <button
+                onClick={() => handleTryQuestion("¿Quién fue el campeón de la Copa Libertadores 2022?")}
+                className="text-[11px] px-2.5 py-1 rounded-lg bg-amber-500/10 text-amber-700 dark:text-amber-400 font-medium hover:bg-amber-500 hover:text-white transition-colors"
+              >
+                Probar: Fuera de Dominio
+              </button>
+            </div>
           </div>
 
           <div className="p-5 rounded-2xl bg-white dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 relative">
