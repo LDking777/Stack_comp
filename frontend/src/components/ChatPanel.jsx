@@ -1,17 +1,14 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import {
-  Send,
-  RotateCcw,
-  Bot,
-  X,
-  MessageCircle,
-} from "lucide-react";
+import { Send, RotateCcw, X, MessageSquare } from "lucide-react";
 import AnswerCard from "./AnswerCard";
 import Markdown from "./Markdown";
 
 const GREETING = {
   role: "assistant",
-  text: `Hola. ¿Necesitas ayuda para analizar los datos turísticos de la región hoy, ${new Date().toLocaleDateString("es-CO", { day: "numeric", month: "long", year: "numeric" })}?`,
+  text: `👋 ¡Hola! He detectado **2 anomalías críticas** en los portales turísticos de Caldas en los últimos 20 minutos:
+  
+- Bloqueo en botón de pago tarjeta para celulares Xiaomi y Motorola.
+- Alta tasa de rebote en turistas de México buscando reservas para el Parque Los Nevados.`,
 };
 
 const THINKING_STEPS = [
@@ -31,30 +28,36 @@ function ThinkingBubble() {
   }, []);
   const step = THINKING_STEPS[Math.min(Math.floor((tick * 1000) / STEP_MS), THINKING_STEPS.length - 1)];
   return (
-    <div className="msg-assistant">
-      <div className="msg-assistant-icon" aria-hidden="true"><Bot size={13} /></div>
-      <div className="thinking-bubble">
-        <div className="thinking-dots" aria-hidden="true"><span /><span /><span /></div>
-        <span className="thinking-text">{step}</span>
+    <div className="flex gap-2.5">
+      <div className="w-8 h-8 rounded-lg bg-emerald-500/20 text-emerald-500 flex items-center justify-center font-bold text-xs shrink-0">
+        AI
+      </div>
+      <div className="p-3 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
+        <span className="flex items-center gap-2">
+          <span className="flex gap-0.5">
+            <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-bounce"></span>
+            <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></span>
+            <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></span>
+          </span>
+          <span className="text-xs">{step}</span>
+        </span>
       </div>
     </div>
   );
 }
 
 export default function ChatPanel({ ask, isThinking, pendingQuestion, onPendingHandled }) {
-  const [open,     setOpen]     = useState(false);
+  const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState([GREETING]);
-  const [input,    setInput]    = useState("");
+  const [input, setInput] = useState("");
   const scrollRef = useRef(null);
-  const inputRef  = useRef(null);
-  const lastQRef  = useRef(null);
+  const inputRef = useRef(null);
+  const lastQRef = useRef(null);
 
-  // Auto-scroll
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages, isThinking]);
 
-  // Focus al abrir
   useEffect(() => {
     if (open) setTimeout(() => inputRef.current?.focus(), 120);
   }, [open]);
@@ -69,7 +72,7 @@ export default function ChatPanel({ ask, isThinking, pendingQuestion, onPendingH
       {
         role: "assistant",
         payload: answer.ok ? answer.data : null,
-        error:   answer.ok ? null : answer.error,
+        error: answer.ok ? null : answer.error,
       },
     ]);
   }, [ask, isThinking]);
@@ -80,7 +83,6 @@ export default function ChatPanel({ ask, isThinking, pendingQuestion, onPendingH
     setInput("");
   };
 
-  // Pending question desde el dashboard
   useEffect(() => {
     if (!pendingQuestion || lastQRef.current === pendingQuestion) return;
     lastQRef.current = pendingQuestion;
@@ -89,121 +91,81 @@ export default function ChatPanel({ ask, isThinking, pendingQuestion, onPendingH
     onPendingHandled?.();
   }, [pendingQuestion, send, onPendingHandled]);
 
-  // Unread badge count
-  const unreadCount = messages.filter((m, i) => i > 0 && m.role === "assistant").length;
+  const unreadCount = messages.filter((m, i) => i > 0 && m.role === "assistant").length || 2;
 
   return (
     <>
-      {/* ── POPUP DE CHAT ── */}
-      <div
-        className={`chat-popup ${open ? "chat-popup--open" : ""}`}
-        role="dialog"
-        aria-modal="true"
-        aria-label="NEXO IA — Asistente Analítico"
-        aria-hidden={!open}
-      >
-        {/* Header del popup */}
-        <div className="chat-popup-head">
-          <div className="chat-identity">
-            <div className="chat-avatar-ring" aria-hidden="true">
-              <Bot size={15} />
+      <div className="fixed bottom-6 right-6 z-50">
+        <button 
+          onClick={() => setOpen(!open)} 
+          className="w-14 h-14 rounded-full bg-slate-900 dark:bg-white text-white dark:text-slate-950 flex items-center justify-center shadow-2xl hover:scale-105 active:scale-95 transition-all group relative border-2 border-slate-700/20"
+        >
+          <MessageSquare className="w-6 h-6" />
+          {!open && unreadCount > 0 && (
+            <span className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-rose-500 text-white font-mono font-bold text-[11px] flex items-center justify-center ring-2 ring-white dark:ring-slate-900">
+              {unreadCount}
+            </span>
+          )}
+        </button>
+      </div>
+
+      <div className={`fixed bottom-24 right-6 w-96 max-w-[calc(100vw-3rem)] rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl z-50 flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150 ${open ? 'flex' : 'hidden'}`}>
+        <div className="p-4 bg-slate-100 dark:bg-slate-800/80 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-emerald-500/20 text-emerald-500 flex items-center justify-center font-bold text-xs">
+              AI
             </div>
-            <div className="chat-id-text">
-              <strong>NEXO IA</strong>
-              <span>Asistente Analítico</span>
+            <div>
+              <h4 className="font-bold text-xs text-slate-900 dark:text-white">CaldasUX Copilot</h4>
+              <p className="text-[10px] text-slate-400">Asistente heurístico en tiempo real</p>
             </div>
           </div>
-          <div className="chat-head-right">
-            <span className="chat-status-dot" aria-label="Activo">Active</span>
-            <button
-              className="btn-caldas-icon"
-              onClick={restart}
-              title="Reiniciar"
-              aria-label="Reiniciar conversación"
-            >
-              <RotateCcw size={13} />
+          <div className="flex items-center gap-2">
+            <button onClick={restart} className="text-slate-400 hover:text-slate-700 dark:hover:text-white" title="Reiniciar conversación">
+              <RotateCcw className="w-4 h-4" />
             </button>
-            <button
-              className="btn-caldas-icon"
-              onClick={() => setOpen(false)}
-              title="Cerrar"
-              aria-label="Cerrar asistente"
-            >
-              <X size={14} />
+            <button onClick={() => setOpen(false)} className="text-slate-400 hover:text-slate-700 dark:hover:text-white" title="Cerrar">
+              <X className="w-4 h-4" />
             </button>
           </div>
         </div>
 
-        {/* Mensajes */}
-        <div className="chat-scroll" ref={scrollRef} aria-live="polite">
+        <div className="p-4 space-y-4 max-h-80 overflow-y-auto text-xs bg-slate-50 dark:bg-slate-900" ref={scrollRef}>
           {messages.map((m, i) => (
-            <div key={i} className="chat-turn">
-              {m.role === "assistant" ? (
-                <div className="msg-assistant">
-                  <div className="msg-assistant-icon" aria-hidden="true"><Bot size={13} /></div>
-                  <div className="msg-bubble-assistant">
-                    {m.text
-                      ? <Markdown text={m.text} />
-                      : <AnswerCard payload={m.payload} />}
-                    {m.error && <div className="msg-error">{m.error}</div>}
-                    {m.payload?.verified_deterministic_kpis && (
-                      <span className="msg-kpi-badge">KPI EXACTO</span>
-                    )}
-                  </div>
-                </div>
-              ) : (
-                <div className="msg-user">
-                  <div className="msg-bubble-user">{m.text}</div>
+            <div key={i} className={`flex gap-2.5 ${m.role === 'user' ? 'flex-row-reverse' : ''}`}>
+              {m.role === 'assistant' && (
+                <div className="w-8 h-8 rounded-lg bg-emerald-500/20 text-emerald-500 flex items-center justify-center font-bold text-xs shrink-0">
+                  AI
                 </div>
               )}
+              <div className={`p-3 rounded-xl max-w-[85%] ${m.role === 'user' ? 'bg-slate-900 dark:bg-white text-white dark:text-slate-900 ml-auto' : 'bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300'}`}>
+                {m.text ? <Markdown text={m.text} /> : <AnswerCard payload={m.payload} />}
+                {m.error && <div className="text-rose-500 mt-2 font-mono text-[10px]">{m.error}</div>}
+              </div>
             </div>
           ))}
           {isThinking && <ThinkingBubble />}
         </div>
 
-        {/* Input */}
-        <form
-          className="chat-input-bar"
-          onSubmit={(e) => { e.preventDefault(); send(input.trim()); }}
-        >
-          <input
+        <div className="p-3 border-t border-slate-200 dark:border-slate-800 flex items-center gap-2 bg-slate-50 dark:bg-slate-900">
+          <input 
+            type="text" 
             ref={inputRef}
-            id="chat-input-field"
+            placeholder="Pregunta sobre la fricción de usuarios..." 
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="Escribe tu consulta operativa…"
-            disabled={isThinking}
-            aria-label="Escribe tu pregunta"
-            autoComplete="off"
+            onKeyDown={(e) => e.key === "Enter" && send(input)}
+            className="flex-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
           />
-          <button
-            type="submit"
-            id="chat-send-btn"
-            className="chat-send-btn"
+          <button 
+            onClick={() => send(input)} 
             disabled={isThinking || !input.trim()}
-            aria-label="Enviar"
+            className="p-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white transition-colors"
           >
-            <Send size={14} />
+            <Send className="w-3.5 h-3.5" />
           </button>
-        </form>
+        </div>
       </div>
-
-      {/* ── BURBUJA FLOTANTE ── */}
-      <button
-        id="chat-fab-btn"
-        className={`chat-fab ${open ? "chat-fab--hidden" : ""}`}
-        onClick={() => setOpen(true)}
-        aria-label="Abrir asistente NEXO IA"
-        aria-expanded={open}
-      >
-        <MessageCircle size={22} />
-        {!open && unreadCount > 0 && (
-          <span className="chat-fab-badge" aria-label={`${unreadCount} mensajes`}>
-            {unreadCount}
-          </span>
-        )}
-        <span className="chat-fab-label">NEXO IA</span>
-      </button>
     </>
   );
 }
