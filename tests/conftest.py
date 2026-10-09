@@ -17,12 +17,36 @@ import os
 
 import pytest
 
+from backend.schemas.router_schemas import (
+    IntentRouterDecision,
+    IntentTrigger,
+    QueryIntentParams,
+    QueryOperation,
+)
 from backend.services import intent_router as intent_router_module
 
 
 # Confianzas que SOLO produce `_heuristic_fallback`. El LLM devuelve valores
 # intermedios (0.88-0.95). Ver AGENTS.md seccion 6, trampa 2.
 FALLBACK_CONFIDENCES = {0.85, 0.88, 0.90}
+
+
+def make_decision(
+    *,
+    trigger=IntentTrigger.TRIGGER_KPIS,
+    confidence=0.94,
+    operation=QueryOperation.COUNT_REGISTROS,
+    requires_heavy_path=False,
+    **params,
+) -> IntentRouterDecision:
+    """Decision de router valida para inyectar via `FakeLLM` en las pruebas."""
+    return IntentRouterDecision(
+        trigger=trigger,
+        confidence_score=confidence,
+        query_intent=QueryIntentParams(operation=operation, **params),
+        requires_heavy_path=requires_heavy_path,
+    )
+
 
 
 @pytest.fixture(autouse=True)
@@ -51,7 +75,7 @@ class FakeLLM:
         self._error = error
         self.available = available
         self.init_error = init_error
-        self.provider = "gemini"
+        self.provider = "groq"
         self.calls = 0
 
     def router_model(self):

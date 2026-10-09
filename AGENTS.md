@@ -2,25 +2,31 @@
 
 Lee este archivo antes de tocar código. Está escrito para que un agente nuevo pueda orientarse sin antes leer todo el repositorio.
 
-> **Regla de oro:** todo cambio de código se refleja en la documentación en el mismo commit. Si modificas `backend/`, `frontend/src/`, `supabase/`, `render.yaml` o `requirements.txt`, actualiza este archivo y la bitácora (secciones 10 y 11 de `ARQUITECTURA_FLUJO_INTENCIONES.md`). El hook `.githooks/pre-commit` lo recuerda; ver sección 9.
+> **Regla de oro:** todo cambio de código se refleja en la documentación en el mismo commit. Si modificas `backend/`, `frontend/src/`, `render.yaml` o `requirements.txt`, actualiza este archivo y la bitácora (`ARQUITECTURA_FLUJO_INTENCIONES.md`, secciones 10 y 11). El hook `.githooks/pre-commit` lo recuerda; ver sección 9.
 
 ---
 
 ## 1. Qué es este proyecto
 
-Nexo IA es un asistente de Business Intelligence para usuarios de ventas. El usuario hace preguntas en lenguaje natural ("¿por qué se frustran los usuarios de México?") y recibe una respuesta con cifras verificadas y una interpretación narrativa.
+Nexo IA es un asistente de Business Intelligence sobre el dataset público de **IPS (instituciones prestadoras de servicios de salud) de Colombia**: **"Relación de IPS públicas y privadas según el nivel de atención y capacidad instalada"** (MinSalud/REPS, id `s2ru-bqt6` en datos.gov.co).
 
-No es un chat de propósito general. El dominio es analítica de sesiones de usuario: métricas de marketing, engagement, contenido de páginas y eventos de fricción.
+El usuario hace preguntas en lenguaje natural ("¿por qué Antioquia concentra tanta capacidad?", "¿cuántas camas hay en Bogotá?") y recibe una respuesta con cifras verificadas y una interpretación narrativa.
+
+No es un chat de propósito general. El dominio es el sistema de salud colombiano: cobertura de IPS, capacidad instalada (camas, consultorios, salas…), naturaleza jurídica (pública/privada/mixta) y niveles de atención.
 
 ### El invariante central
 
-**El LLM nunca calcula números.** PostgreSQL agrega; el LLM solo narra.
+**El LLM nunca calcula números.** Socrata (datos.gov.co) agrega vía **SoQL**; el LLM solo narra.
 
-Si alguna vez modificas este diseño, cualquier ruta que haga que el modelo estime, infiera o "aproxime" un KPI es un bug, no una mejora. Los numeros exactos vienen de la base de datos o del fallback determinista, nunca del prompt.
+Si alguna vez modificas este diseño, cualquier ruta que haga que el modelo estime, infiera o "aproxime" un KPI es un bug, no una mejora. Los números exactos vienen de la API pública o del fallback, nunca del prompt.
 
 ### Segundo invariante
 
 Los cálculos deterministas y la síntesis cualitativa son capas separadas. El router decide cuál se ejecuta; no se mezclan los resultados.
+
+### Tercer invariante: la fuente es externa y de solo lectura
+
+No hay base de datos propia ni Supabase. Toda la agregación ocurre en `https://www.datos.gov.co/resource/s2ru-bqt6.json`. La fuente está congelada desde `2022-11-21` (REPS), por eso el cache en memoria del servicio es seguro.
 
 ---
 
@@ -31,43 +37,43 @@ api-service-v2/
 ├── backend/                    # API FastAPI (todo el análisis)
 │   ├── main.py                 # Endpoints y orquestación del pipeline
 │   ├── config.py               # Settings desde .env (Pydantic)
+│   ├── data/
+│   │   └── knowledge_ips.json  # Knowledge local del asistente (directrices)
 │   ├── mcp/connector.py        # Registro de conectores MCP
 │   ├── schemas/                # Contratos Pydantic (router, insights, API)
-│   │   ├── router_schemas.py   # IntentRouterDecision, RPCIntentParams, IntentTrigger
+│   │   ├── router_schemas.py   # IntentRouterDecision, QueryIntentParams, IntentTrigger
 │   │   ├── insight_schemas.py  # QualitativeInsightResponse
 │   │   ├── knowledge_schemas.py# KnowledgeContext, KnowledgeEntry
 │   │   └── api_schemas.py      # QueryRequest, QueryResponse, HealthResponse
-│   └── services/               # Lógica de negocio (aqui vive el 90% del trabajo)
-│       ├── intent_router.py    # Fast Path: query -> trigger + filtros + RPC
-│       ├── supabase_service.py # RPC + fallback determinista en Python
-│       ├── toon_service.py     # Compresion TOON del contexto
+│   └── services/               # Lógica de negocio (aquí vive el 90% del trabajo)
+│       ├── intent_router.py    # Fast Path: query -> trigger + filtros + operación
+│       ├── datosgov_service.py # SoQL a datos.gov.co (agregación determinista)
+│       ├── toon_service.py     # Compresión TOON del contexto
 │       ├── insights_service.py # Heavy Path: KPIs -> narrativa
-│       ├── knowledge_service.py# Directrices de auditoria (tabla knowledge_auditoria)
-│       ├── llm_client.py       # Abstraccion Gemini/OpenAI/Groq + adaptacion de esquemas
-│       └── normalization.py    # Paises y dispositivos (acentos, alias)
+│       ├── knowledge_service.py# Directrices desde backend/data/knowledge_ips.json
+│       ├── llm_client.py       # Abstracción Gemini/OpenAI/Groq + adaptación de esquemas
+│       └── normalization.py    # Departamentos, naturaleza, nivel, grupo de capacidad
 ├── frontend/                   # React + Vite (desplegado en Vercel)
 │   └── src/
-│       ├── App.jsx             # Composicion tablero + burbuja + panel
+│       ├── App.jsx             # Topbar + tablero + burbuja de chat
 │       ├── api.js              # Cliente HTTP; API_BASE recorta el "/" final
 │       └── components/
-│           ├── BIDashboard.jsx     # KPIs, paises, dispositivos, friccion
-│           ├── ChatPanel.jsx       # Burbuja flotante NEXO IA + panel lateral
-│           ├── Markdown.jsx        # Render minimo de markdown para respuestas del bot
-│           └── AnswerCard.jsx      # Render de respuestas estructuradas
-├── tests/                      # pytest (pytest.ini: testpaths=tests, 47 pruebas)
-├── supabase/migrations/        # SQL: esquema inicial + knowledge_auditoria
+│           ├── BIDashboard.jsx # KPIs, desgloses por departamento/naturaleza/capacidad
+│           ├── ChatPanel.jsx   # Burbuja flotante NEXO IA
+│           ├── Markdown.jsx    # Render mínimo de markdown para respuestas del bot
+│           └── AnswerCard.jsx  # Render de respuestas estructuradas
+├── tests/                      # pytest (pytest.ini: testpaths=tests)
 ├── render.yaml                 # Blueprint de Render: rootDir, build, start, envVars
-├── requirements.txt            # Dependencias del backend (fuente unica)
-├── pytest.ini                  # Configuracion de pruebas
+├── requirements.txt            # Dependencias del backend (fuente única)
+├── pytest.ini                  # Configuración de pruebas
 ├── README.md                   # Arranque local y despliegue
-├── opencode.json               # Config de opencode (MCP de Supabase)
-├── ARQUITECTURA_FLUJO_INTENCIONES.md   # Arquitectura, estado real, bitacora
-├── .githooks/pre-commit        # Recuerda actualizar la documentacion
+├── opencode.json               # Config de opencode
+├── ARQUITECTURA_FLUJO_INTENCIONES.md   # Arquitectura, estado real, bitácora
+├── .githooks/pre-commit        # Recuerda actualizar la documentación
 └── .env                        # Secretos locales. Gitignored. Nunca commitear
 ```
 
-No existe `legacy/` ni `docs/`: el v1 Flask (`app.py`, `ai_clients.py`, `telegram_bot.py`, `knowledge_base.py`, `test_keys.py`, `test_models.py`, `check_supabase.py`, `static/`, `templates/`) fue **eliminado** del repositorio. Su código sigue en el historial (`git show <commit>:app.py`).
-
+No existe `legacy/`, `docs/` ni `supabase/`. El v1 Flask y las migraciones de Supabase fueron **eliminados** (su código sigue en el historial de git).
 
 ---
 
@@ -75,45 +81,45 @@ No existe `legacy/` ni `docs/`: el v1 Flask (`app.py`, `ai_clients.py`, `telegra
 
 Este es el recorrido de `POST /api/v1/query`. Si buscas un comportamiento, este es el orden.
 
-1. `backend/main.py` — orquestacion. Decide modo fast vs heavy.
-2. `backend/services/intent_router.py` — clasifica y extrae filtros.
-3. `backend/services/supabase_service.py` — ejecuta RPC o fallback.
-4. `backend/services/insights_service.py` — genera narrativa (solo heavy).
+1. `backend/main.py` — orquestación. Decide Fast vs Heavy Path.
+2. `backend/services/intent_router.py` — clasifica y extrae filtros. Saludos, definiciones y listados se resuelven aquí sin LLM.
+3. `backend/services/datosgov_service.py` — ejecuta la operación SoQL (o devuelve `sin_datos`).
+4. `backend/services/insights_service.py` — genera narrativa (solo Heavy Path).
 5. `backend/schemas/` — el contrato de lo que sale por cada lado.
 
-Para el tablero, entra directo en `backend/main.py` (`GET /api/v1/dashboard`) y salta a `supabase_service.fetch_operational_records()`.
+Para el tablero, entra directo en `backend/main.py` (`GET /api/v1/dashboard`) y salta a `datosgov_service.execute()` (varias operaciones en `asyncio.gather`).
 
 ---
 
-## 4. Donde buscar para optimizar tokens
+## 4. Dónde buscar para optimizar tokens
 
-Si la tarea es reducir consumo de tokens, empieza aqui y en este orden de impacto.
+Si la tarea es reducir consumo de tokens, empieza aquí y en este orden de impacto.
 
-### 4.1. El limite de registros — mayor palanca
+### 4.1. El límite de registros — mayor palanca
 
-`backend/main.py` llama a `supabase_service.fetch_operational_records(tabla, limit=10)`. Ese `10` multiplica directamente el costo del Heavy Path: los tres bloques de contexto que se comprimen a TOON. Bajarlo a 5 reduce a la mitad el contexto, con perdida de detalle. Subirlo sube el costo de forma lineal.
+`backend/main.py` llama a `datosgov_service.fetch_records(limit=10, ...)`. Ese `10` multiplica directamente el costo del Heavy Path: el bloque de contexto que se comprime a TOON. Bajarlo a 5 reduce a la mitad el contexto, con pérdida de detalle. Subirlo sube el costo de forma lineal.
 
-### 4.2. La compresion TOON
+### 4.2. La compresión TOON
 
-`backend/services/toon_service.py`. Ya entrega -53% a -60% frente a JSON. Si buscas mas, el lugar correcto es aqui, no en los prompts.
+`backend/services/toon_service.py`. Ya entrega -53% a -60% frente a JSON. Si buscas más, el lugar correcto es aquí, no en los prompts.
 
 ### 4.3. Los prompts del sistema
 
-`ROUTER_SYSTEM_PROMPT` en `intent_router.py` (~570 tokens) se envia **completo en todas las consultas**. `HEAVY_PATH_SYSTEM_PROMPT` en `insights_service.py` (~254 tokens) solo en heavy path.
+`ROUTER_SYSTEM_PROMPT` en `intent_router.py` se envía **completo en todas las consultas que llegan al LLM** (saludos, definiciones y listados no llegan). `HEAVY_PATH_SYSTEM_PROMPT` en `insights_service.py` solo en Heavy Path.
 
-El router es determinista y de bajo riesgo, asi que es el candidato natural a prompt mas corto: buena parte de sus reglas pueden pasar al esquema Pydantic, donde no se repiten por llamada.
+El router es determinista y de bajo riesgo, así que es el candidato natural a prompt más corto: buena parte de sus reglas pueden pasar al esquema Pydantic, donde no se repiten por llamada.
 
-### 4.4. Serializacion de KPIs
+### 4.4. Serialización de KPIs
 
-`insights_service.py` construye el contexto con `f"{kpis}"`, que produce la `repr()` de un dict de Python. No es JSON y es mas verboso. Usar `json.dumps` mejora la claridad para el modelo y suele reducir caracteres.
+`insights_service.py` construye el contexto con `json.dumps(kpis, ensure_ascii=False, indent=2)`. Antes usaba `f"{kpis}"` (la `repr()` de un dict de Python, más verbosa).
 
 ### 4.5. Campos muertos en la respuesta
 
-`QueryResponse` sigue enviando `toon_context_preview` (~250 chars), `trigger`, `confidence_score` y `latency`. El frontend ya no lee ninguno: la UX los ocultó a proposito. `toon_context_preview` es el unico con costo apreciable y se calcula sin consumidor. No ahorra tokens de LLM, pero reduce ancho de banda.
+`QueryResponse` aún puede enviar `toon_context_preview` (ya no se calcula), `trigger`, `confidence_score` y `latency`. El frontend ya no lee ninguno. Reducir esto no ahorra tokens de LLM, pero reduce ancho de banda.
 
 ### 4.6. Lo que NO debes optimizar
 
-Los KPIs deterministas. Son la fuente de verdad. Recortarlos para ahorrar tokens degrada el insight sin beneficio. Y `contenido_paginas` devuelve 0 filas: cualquier contexto que se le anada hoy es costo sin informacion.
+Los KPIs deterministas. Son la fuente de verdad. Recortarlos para ahorrar tokens degrada el insight sin beneficio.
 
 ---
 
@@ -127,23 +133,22 @@ Invoke-WebRequest -Uri "http://127.0.0.1:8000/api/v1/health" -UseBasicParsing
 # Frontend
 cd frontend; npm run dev
 
-# Pruebas (47, sin llamar al proveedor real de LLM)
-.\venv\Scripts\python.exe -m pytest -q
+# Pruebas (sin llamar al proveedor real de LLM)
+$env:PYTHONIOENCODING="utf-8"; .\venv\Scripts\python.exe -m pytest -q
 
-# Verificar que un cambio no rompio las importaciones
+# Verificar que un cambio no rompió las importaciones
 .\venv\Scripts\python.exe -c "import backend.main"
 ```
 
-
-Endpoint de consulta rapida:
+Endpoint de consulta rápida:
 
 ```powershell
 Invoke-RestMethod -Uri "http://127.0.0.1:8000/api/v1/query" -Method Post `
   -ContentType "application/json" `
-  -Body '{"query":"Analiza los usuarios de Mexico en celular"}'
+  -Body '{"query":"¿Cuántas camas hay en Antioquia?"}'
 ```
 
-`GET /api/v1/health` expone `provider`, los modelos efectivos y `rpcs_deployed`. Si `rpcs_deployed` es `false`, los numeros vienen del fallback de Python, no de PostgreSQL.
+`GET /api/v1/health` expone `provider`, los modelos efectivos y el bloque `fuente_datos` (dataset, recurso y operaciones SoQL disponibles).
 
 ---
 
@@ -151,51 +156,39 @@ Invoke-RestMethod -Uri "http://127.0.0.1:8000/api/v1/query" -Method Post `
 
 Estas cosas fallan **en silencio**. Un cambio puede romper el sistema sin que ninguna prueba falle, porque el fallback determinista siempre responde.
 
-1. **El fallback tapa los fallos del LLM.** Si Gemini devuelve algo invalido, el sistema responde igual con reglas heuristicas. Solo se nota en los logs (`Error en el Intent Router`). Al probar, revisa el log: una respuesta correcta no prueba que el LLM se haya usado.
-2. **Confianza alta no significa LLM.** `_heuristic_fallback` asigna confianzas fijas (0.85, 0.88, 0.90). El LLM produce valores como 0.88-0.95. Si ves 0.85 o 0.90 exactos, sospecha fallback.
-3. **Gemini rechaza esquemas Pydantic.** Acepta solo un subconjunto de OpenAPI Schema. `title`, `$defs`, `minimum`, `maximum` y `additionalProperties` producen `Unknown field for Schema`. Cualquier campo nuevo agregado a un esquema Pydantic puede romper la llamada. `inline_refs()` en `llm_client.py` lo maneja; verificalo si tocas los schemas.
-4. **Normalizacion de pais.** `Mexico` y `México` son valores distintos en la base de datos. Sin pasar por `normalization.py`, el filtro cae a `GLOBAL` y el usuario ve datos de todos los paises creyendo que filtro.
-5. **`AIza...` vs `AQ.Ab8...`.** Las claves de Gemini tienen dos formatos. El activo es `AQ.Ab8...` y esta en `.env`. No imprimir claves en salidas, commits ni mensajes.
-6. **El paquete `google.generativeai` esta deprecado** a favor de `google.genai`. Funciona, pero emite `FutureWarning` en cada arranque.
+1. **El fallback tapa los fallos del LLM.** Si el proveedor devuelve algo inválido, el sistema responde igual con reglas heurísticas. Solo se nota en los logs (`Error en el Intent Router`). Al probar, revisa el log: una respuesta correcta no prueba que el LLM se haya usado.
+2. **Confianza alta no significa LLM.** `_heuristic_fallback` asigna confianzas fijas (0.85, 0.88, 0.90). Si ves 0.85 o 0.90 exactos, sospecha fallback.
+3. **Gemini rechaza esquemas Pydantic.** Acepta solo un subconjunto de OpenAPI Schema. `title`, `$defs`, `minimum`, `maximum` y `additionalProperties` producen `Unknown field for Schema`. `inline_refs()` en `llm_client.py` lo maneja; verifícalo si tocas los schemas.
+4. **SoQL compara texto EXACTO y su `lower()` NO quita acentos.** `naturaleza='Pública'` funciona; `lower(naturaleza)='publica'` devuelve 0 filas. Toda canonicalización debe ocurrir en `normalization.py` antes de armar el `$where`. Los municipios llegan en MAYÚSCULAS y con acentos propios ("APARTADÓ"), y se resuelven contra un índice dinámico cacheado.
+5. **NUNCA usar `api/v3/views/s2ru-bqt6/query.json`.** Ignora `$limit` y devuelve el dataset completo (~36 MB). El endpoint `/resource/` sí respeta filtros y agregaciones y responde en KB.
+6. **El paquete `google.generativeai` está deprecado** a favor de `google.genai`. Funciona, pero emite `FutureWarning` en cada arranque.
 7. **Root Directory de Render.** Si el servicio apunta a `./backend`, `uvicorn backend.main:app` falla con `ModuleNotFoundError: No module named 'backend'` porque todo el código importa `from backend...`. Debe quedar en la raíz del repo. Ver sección 8.
-8. **`VITE_API_URL` con barra final.** `api.js` concatenaba `...onrender.com/` + `/api/v1/...` = `//api/v1/...`, que Starlette no matchea: 404 `{"detail":"Not Found"}`. `API_BASE` ya recorta barras, pero el valor limpio sigue siendo el correcto. Además Vite inyecta `VITE_*` **en el build**: cambiar la variable sin redeployar no hace nada.
+8. **`VITE_API_URL` con barra final.** `api.js` concatena `...onrender.com/` + `/api/v1/...` = `//api/v1/...`, que Starlette no matchea: 404 `{"detail":"Not Found"}`. `API_BASE` ya recorta barras, pero el valor limpio sigue siendo el correcto. Además Vite inyecta `VITE_*` **en el build**: cambiar la variable sin redeployar no hace nada.
 9. **Deploy sin push.** Vercel y Render despliegan lo que hay en `Stack_comp`, no tu disco. Un commit local no despliega nada; la verificación es ver el bundle/nombre del asset cambiado, no asumir.
-
+10. **`sum_capacity` sin `group_by` es un total.** En `datosgov_service.execute()`, `sum_capacity` con `group_by` devuelve desglose + `total_capacidad`; sin `group_by` devuelve solo `total_capacidad` (escalar). No es un error.
 
 ---
 
 ## 7. Estado actual y pendientes
 
-Al dia de hoy:
+Al día de hoy el sistema corre sobre **datos.gov.co** (Socrata/SoQL); Supabase fue eliminado por completo.
 
-- Router, Heavy Path, tablero y chat funcionando con **Groq** (`LLM_PROVIDER=groq`, modelo `openai/gpt-oss-120b` en ambas etapas). Groq es el proveedor activo por decisión: Gemini se descartó por no ofrecer capa gratuita y OpenAI está sin créditos (`429 insufficient_quota`).
-- **API desplegada en Render** (`stack-comp.onrender.com`) y **frontend en Vercel** (`stack-comp.vercel.app`), verificados con `curl`.
-- `insights_service.py` sin llamada asincrona sin await, resuelto.
-- Fallo de filtro de pais, resuelto.
-- Compresion TOON verificada.
-- v1 Flask eliminado del repo; `README.md` reescrito para v2.
-- **Preguntas de definicion/fuera de dominio con guia.** `intent_router.py` resuelve "¿que es engagement?" con un glosario determinista (`_definition_reply`, sin LLM): explica el termino y sugiere una pregunta. El mensaje de clarificacion del fallback y el del LLM ahora incluyen ejemplos. Se quitaron las preguntas rapidas del frontend (`STARTER_QUESTIONS` en `ChatPanel.jsx`).
-- **UI del bot ajustada.** El chat se llama **NEXO IA** (antes CALDAS IA) y usa un tema monocromo (grises/negros/blancos) en toda la web: tokens en `index.css` (acento, tintes y estados sin color), literales de `BIDashboard.jsx` (SVG de onda/gauge y donut) y bloque final mono en `App.css`. Las respuestas del bot pasan por `Markdown.jsx` (sin dependencias) para que no se vean asteriscos ni `###` crudos.
-- **Dashboard alineado con los datos reales.** `BIDashboard.jsx` ya no muestra turismo hardcodeado (ocupación hotelera, ingresos, categorías). Ahora pinta lo que devuelve `GET /api/v1/dashboard`: sesiones totales, engagement promedio (gauge), tasa de frustración, duración promedio, desglose por dispositivo (donut), sesiones por país y puntos de fricción. Header genérico "RESUMEN ANALÍTICO DE SESIONES"; se eliminó el selector de periodo ficticio.
-- **Rediseño UI/UX premium.** Implementado `ThemeContext` con soporte light/dark mode persistido en localStorage y selector en Topbar. Se añadió el hook `useCountUp` para contadores animados sin romper exactitud determinista. Se corrigió el responsive drawer en mobile y se aplicó estilización homogénea para FAB y ChatPanel. Build verificado en 410ms y 42 pruebas aprobadas.
-- **Diagnósticos y utilidades de audio para Hackathon.** Creados `frontend/src/data/frictionDiagnostics.js` (mapa de datos simulados y causas de fricción, `getFrictionDiagnostic`, `submodulesInfo`) y `frontend/src/utils/soundEffects.js` (sistema de micro-sonidos Web Audio API).
-- **Adaptación para Hackathon Propuesta.** Se integró la vista "Pitch & Innovación" y "Dashboard En Vivo", incluyendo el modal `FrictionReplayModal` (simulador interactivo de RageClicks con recomendación de parche). Nombre provisional "Hackathon Propuesta" estandarizado con comentarios de reemplazo futuro. QA superado: build limpio en 415ms, 42 tests pytest aprobados.
-- **Replicación exacta de la propuesta visual de la Hackathon con Tailwind.** Se reemplazó el frontend provisional por la réplica exacta de `Propuesta front/turismo_caldas_5_0_hackathon_platform_dashboard.html`, adoptando su paleta de colores (slate, emerald, amber, rose), tipografía (*Plus Jakarta Sans* y *JetBrains Mono*), Tailwind CSS vía CDN, animaciones y microinteracciones. Se implementó el Switcher entre vistas ("Pitch & Innovación" vs "Dashboard En Vivo"), el simulador interactivo de RageClicks (`FrictionReplayModal`), modales contextuales, sistema de micro-sonidos Web Audio API, notificaciones Toast con Tailwind y el asistente NEXO IA conectado al backend (`askNexo`). Nombre provisional "Hackathon Propuesta" estandarizado y comentado. Auditoría QA aprobada (build de Vite limpio en 426ms y linter con 0 errores).
-- **Corrección de renderizado en producción (ThemeContext).** Se modificó `useTheme` en `ThemeContext.jsx` para incluir un fallback defensivo, previniendo errores críticos si se invoca fuera de su proveedor. Se verificó que `main.jsx` envuelve correctamente a `<App />` con `<ThemeProvider>`.
+- **Router, Heavy Path, tablero y chat funcionando** con **Groq** (`LLM_PROVIDER=groq`, modelo `openai/gpt-oss-120b` en ambas etapas). Groq es el proveedor activo por decisión: Gemini se descartó por no ofrecer capa gratuita y OpenAI está sin créditos (`429 insufficient_quota`).
+- **Fuente de datos**: dataset `s2ru-bqt6` (41.427 registros, corte `2022-11-21`, ~1.027 municipios). Agregaciones en vivo vía SoQL.
+- **Pivote completado**: la capa de datos (`datosgov_service.py`), la normalización (departamentos/naturaleza/nivel/grupo), los esquemas, el router, el knowledge local (`backend/data/knowledge_ips.json`) y el frontend (tablero IPS, sin el bloque pitch/turismo) fueron migrados al dominio de salud.
+- **Knowledge local** del asistente con 8 directrices (capacidad, cobertura, gestión, calidad de datos). Si falta el archivo, el Heavy Path sigue sin directrices.
+- **Preguntas de definición/fuera de dominio con guía.** `intent_router.py` resuelve "¿qué es una IPS?" con un glosario determinista (`_definition_reply`, sin LLM), saludos y capacidades (`_small_talk_reply`) y listados (`_list_intent`).
+- **UI**: tema claro/oscuro persistido (`ThemeContext`) y acento emerald. El chat se llama **NEXO IA**.
 
 Pendientes, en orden de impacto:
 
-1. **RPCs sin desplegar.** Es el pendiente critico. Hasta que existan en Supabase, la agregacion no ocurre en PostgreSQL: la sustituye el fallback de Python. Ver seccion 10.2 del documento de arquitectura.
-2. **Prompt y esquema desalineados.** El esquema permite combinaciones inconsistentes de trigger y RPC. Se necesita validacion cruzada.
-3. **Sin CI.** El push dispara el deploy sin correr `pytest`, `npm run lint` ni `npm run build`. Un error solo se ve en produccion.
-4. **Blueprint de Render no vinculado.** `render.yaml` existe pero el servicio se configuro a mano en el dashboard: la fuente real de la config es el dashboard, no el repo. Vincularlo para eliminar el drift.
-5. **Saludo inicial no se renderiza** en `ChatPanel.jsx` (el mensaje lleva `text` pero se pinta via `payload`).
-6. **MCP de Supabase** requiere reiniciar opencode y autorizar por OAuth.
-7. **`google.generativeai` deprecado**, migrar a `google.genai`.
+1. **Sin CI.** El push dispara el deploy sin correr `pytest`, `npm run lint` ni `npm run build`. Un error solo se ve en producción.
+2. **Blueprint de Render no vinculado.** `render.yaml` existe pero el servicio se configuró a mano en el dashboard: la fuente real de la config es el dashboard, no el repo. Vinculenlo para eliminar el drift.
+3. **Prompt del router y esquema.** El esquema permite combinaciones de trigger/operación poco consistentes. Falta validación cruzada.
+4. **`google.generativeai` deprecado**, migrar a `google.genai`.
+5. **Saludo inicial de `ChatPanel.jsx`**: verifica que se renderice (lleva `text` y no `payload`).
 
-Ya resuelto en estas sesiones: `requirements.txt` completo y en UTF-8, `.env` alineado con `config.py`, esquema Pydantic adaptado a Gemini, filtro de pais normalizado, TOON verificado, despliegues Render + Vercel funcionando y limpieza del v1.
-
-El detalle completo de errores corregidos y pendientes vive en las secciones 10 y 11 de `ARQUITECTURA_FLUJO_INTENCIONES.md`. Actualiza esa bitacora al cerrar cada tarea.
+El detalle completo de errores corregidos y pendientes vive en las secciones 10 y 11 de `ARQUITECTURA_FLUJO_INTENCIONES.md`. Actualiza esa bitácora al cerrar cada tarea.
 
 ---
 
@@ -206,43 +199,43 @@ El detalle completo de errores corregidos y pendientes vive en las secciones 10 
 | API FastAPI | Render | `stack-comp.onrender.com` | Repo `Stack_comp`, rama `pdn_qa` |
 | Frontend React | Vercel | `stack-comp.vercel.app` | Repo `Stack_comp`, rama `pdn_qa` |
 
-Configuracion real del servicio en Render (hoy en el dashboard, no sincronizada con `render.yaml`):
+Configuración real del servicio en Render (hoy en el dashboard, no sincronizada con `render.yaml`):
 
-- **Root Directory:** vacio (raiz del repo). Con `./backend` el arranque muere con `ModuleNotFoundError` — ver trampa 7.
+- **Root Directory:** vacío (raíz del repo). Con `./backend` el arranque muere con `ModuleNotFoundError` — ver trampa 7.
 - **Build Command:** `pip install -r requirements.txt`
 - **Start Command:** `uvicorn backend.main:app --host 0.0.0.0 --port $PORT`
 - **Health Check Path:** `/api/v1/health`
+- **Variables:** `LLM_PROVIDER=groq`, modelos Groq y `GROQ_API_KEY` (secretos a mano en el dashboard). Ya no hay variables de Supabase.
 
 En Vercel: `VITE_API_URL=https://stack-comp.onrender.com` sin `/` final, y todo cambio de variable exige redeploy (ver trampa 8).
 
-Un solo remoto: `stack` (`LDking777/Stack_comp`), fuente unica del proyecto. El deploy sale de `stack/pdn_qa`, que va en fast-forward con `developer`. El remoto `origin` (`LDking777/api-service-v2`) se elimino de este clon el 2026-10-08 para independizar el proyecto; ese repositorio quedo como estaba (v1 Flask, `main` en `3d11d6e`).
+Un solo remoto: `stack` (`LDking777/Stack_comp`), fuente única del proyecto. El deploy sale de `stack/pdn_qa`. El remoto `origin` (`LDking777/api-service-v2`) se eliminó de este clon el 2026-10-08.
 
-Verificacion posterior al deploy:
+Verificación posterior al deploy:
 
 1. `git ls-remote stack refs/heads/pdn_qa` debe devolver el commit que acabas de empujar.
 2. `curl https://stack-comp.onrender.com/api/v1/health` → 200 con `provider`.
-3. El asset del front cambia de nombre: `https://stack-comp.vercel.app/` → `/assets/index-<hash>.js`. Si el hash no cambio, no se desplego nada.
+3. El asset del front cambia de nombre: `https://stack-comp.vercel.app/` → `/assets/index-<hash>.js`. Si el hash no cambió, no se desplegó nada.
 
 ---
 
-## 9. Regla de documentacion: codigo y .md viajan juntos
+## 9. Regla de documentación: código y .md viajan juntos
 
-Un cambio que no se documenta es deuda: el siguiente agente (o tu yo del mes que viene) toma decisiones con informacion vieja.
+Un cambio que no se documenta es deuda: el siguiente agente (o tu yo del mes que viene) toma decisiones con información vieja.
 
-Siempre que modifiques `backend/`, `frontend/src/`, `supabase/`, `render.yaml`, `requirements.txt`, `pytest.ini` o `.githooks/`, actualiza en el mismo commit:
+Siempre que modifiques `backend/`, `frontend/src/`, `render.yaml`, `requirements.txt`, `pytest.ini` o `.githooks/`, actualiza en el mismo commit:
 
 1. **`AGENTS.md`** — mapa, comandos, trampas conocidas y estado/pendientes (este archivo).
-2. **`ARQUITECTURA_FLUJO_INTENCIONES.md`** — anade el caso en la seccion 10.1 (corregido) o 10.2 (pendiente) y cierra en la 11.
+2. **`ARQUITECTURA_FLUJO_INTENCIONES.md`** — añade el caso en la sección 10.1 (corregido) o 10.2 (pendiente) y cierra en la 11.
 
-Para que no dependa de la memoria, el hook `.githooks/pre-commit` bloquea el commit si tocaste archivos de codigo sin llevar documentacion staged. Se activa una vez por clon:
+Para que no dependa de la memoria, el hook `.githooks/pre-commit` bloquea el commit si tocaste archivos de código sin llevar documentación staged. Se activa una vez por clon:
 
 ```powershell
 git config core.hooksPath .githooks
 ```
 
-Salida deliberada cuando el cambio realmente no afecta la documentacion:
+Salida deliberada cuando el cambio realmente no afecta la documentación:
 
 ```powershell
 $env:SKIP_DOCS=1; git commit -m "..."
 ```
-

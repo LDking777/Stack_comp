@@ -388,19 +388,31 @@ Registro de defectos detectados durante la implementación, con su estado actual
 13. **Rediseño UI/UX premium implementado.** Se incorporó `ThemeContext` para manejar soporte light/dark mode persistido en `localStorage` y selector en Topbar. Se implementó un hook personalizado `useCountUp` para animar suavemente KPIs y contadores sin romper la exactitud matemática. Se realizaron ajustes en responsive (drawer en mobile) y estilización homogénea para FAB y `ChatPanel`. Todo validado sin tocar lógica de negocio del flujo analítico y verificado con un build en 410ms y 42 pruebas pasadas.
 14. **Adaptación de la propuesta de la Hackathon.** Se integraron las vistas "Pitch & Innovación" y "Dashboard En Vivo". Implementación de utilidades como `soundEffects.js` (motor Web Audio API puro) y `frictionDiagnostics.js` (telemetría detallada, `getFrictionDiagnostic` y `submodulesInfo`). Inclusión del modal interactivo `FrictionReplayModal` simulando RageClicks con recomendación prescriptiva de parche. Estandarización de nombre provisional "Hackathon Propuesta" con comentarios explícitos para reemplazo futuro. Auditoría QA aprobada: build limpio en 415ms, 42 tests pytest aprobados.
 
+15. **Pivote de dominio a IPS/Salud sobre datos.gov.co (2026-10-09).** El MVP de analítica de sesiones sobre Supabase se reemplazó por un asistente de BI sobre el dataset público `s2ru-bqt6` (IPS de Colombia, MinSalud/REPS). Cambios por capa:
+    - **Datos**: se eliminó `supabase_service.py` y se creó `datosgov_service.py`, que arma SoQL (`$select`/`$where`/`$group`/`$order`/`$limit`) contra `https://www.datos.gov.co/resource/s2ru-bqt6.json`. Toda la agregación ocurre en Socrata; el LLM solo narra. Seis operaciones (`count_registros`, `count_prestadores`, `sum_capacity`, `avg_capacity`, `list_departamentos`, `group_by`). Caches en memoria (`_CACHE_TTL_S=600`, índice de municipios `86400`), seguros porque la fuente está congelada desde `2022-11-21`.
+    - **Normalización**: `normalization.py` pasó de países/dispositivos a departamentos (38 valores exactos del dataset, incluidas ciudades como entidad), naturaleza (Privada/Pública/Mixta), nivel de atención (1-3) y grupo de capacidad (7). Exporta `DEPARTAMENTO_LOOKUP`/`GRUPO_LOOKUP` y `match_department`.
+    - **Contratos**: `router_schemas.py` ahora expone `QueryOperation` (6), `QueryIntentParams` (operation/group_by/*_filter/math_operation/target_metric) e `IntentRouterDecision.query_intent`. `insight_schemas.py` renombró la sección cualitativa a `coverage_and_capacity_analysis`.
+    - **Router**: `intent_router.py` reescrito con glosario de salud (13 términos), small talk y listados deterministas, y `_heuristic_fallback` que propaga los filtros del dominio.
+    - **Knowledge**: se creó `backend/data/knowledge_ips.json` (8 directrices) y `knowledge_service.py` pasó a leer archivo local (cache por `mtime`) en vez de la tabla `knowledge_auditoria` de Supabase.
+    - **Frontend**: se eliminaron `PitchSection.jsx`, `FrictionReplayModal.jsx`, `SubmoduleModal.jsx` y `frictionDiagnostics.js`; `BIDashboard.jsx` y `AnswerCard.jsx` se reescribieron para el payload IPS (registros, prestadores, capacidad, desgloses, `fuente`).
+    - **Infra**: `render.yaml` sin variables de Supabase, `opencode.json` sin el MCP de Supabase, `config.py` con `DATOS_GOV_RESOURCE_URL` y `APP_NAME` de salud, `README.md` reescrito. Se eliminó el directorio `supabase/`.
+
+16. **`sum_capacity` sin `group_by` devolvía error.** La operación exigía desglose y respondía `falta_group_by`, lo que rompía preguntas directas como "¿cuántas camas hay en Antioquia?". Se corrigió para devolver un escalar `{total_capacidad, ...}` vía `_scalar(...)` cuando no hay `group_by` (con `group_by` sigue devolviendo el desglose). `_format_fast_path` en `main.py` formatea ambos casos.
+
+17. **`_list_intent` secuestraba preguntas de conteo.** El verbo "hay" estaba en la lista de disparadores de listado, así que "cuántas camas hay en las IPS..." se respondía como listado. Se restringió a verbos explícitos (`lista`, `listado`, `list`, `muestr`, `enumera`, `cuales`, `existen`).
+
+18. **Suite de pruebas y documentación alineadas al dominio.** Se reescribieron `tests/conftest.py` (`FALLBACK_CONFIDENCES`, `make_decision`, `FakeLLM` con proveedor `groq`), los tests de router, endpoints y knowledge, y se añadió `tests/test_datosgov_service.py`. Resultado: **68 pasan / 5 saltan** (las `live_llm` siguen opt-in). `AGENTS.md` y `README.md` reescritos para IPS/datos.gov.co.
+
 ### 10.2. Pendientes
 
-1. **RPCs sin desplegar.** Es el pendiente de mayor impacto. Mientras no existan, la "ejecución determinista en PostgreSQL" no ocurre: el fallback de Python sustituye a la base de datos. Requiere `apply_migration` vía MCP de Supabase con OAuth, o ejecución manual del SQL.
-2. **Prompt y esquema desalineados.** El test del router con la consulta de DeadClicks devolvió `TRIGGER_KPIS` junto a `rpc_name: rpc_get_engagement_summary`. El esquema permite combinaciones inconsistentes porque no valida que el trigger y la RPC correspondan.
-3. **Saludo inicial no se renderiza.** `ChatPanel.jsx` construye el mensaje de bienvenida con `text`, pero los mensajes del asistente se pintan siempre vía `<AnswerCard payload={m.payload} />`. El texto del saludo no llega a verse.
-4. **Pregunta repetida idéntica.** `App.jsx` deduplica con una ref que compara la última pregunta; seleccionar dos veces la misma tarjeta no dispara un segundo envío.
-5. **Advertencia de SDK obsoleto.** `google.generativeai` está deprecado a favor de `google.genai`. Funciona, pero conviene migrar.
-6. **Acceso MCP no disponible en la sesión actual.** Requiere reiniciar opencode y autorizar por OAuth.
-7. **Campos muertos en el contrato.** Ver 9.3.
-8. **Sin CI/CD.** El push dispara el despliegue en Render y Vercel sin ejecutar antes `pytest`, `npm run lint` ni `npm run build`: un error solo se manifiesta en producción. Ver `AGENTS.md` sección 7.
-9. **Blueprint de Render no vinculado.** `render.yaml` describe `rootDir`, build y start, pero el servicio se configuró a mano en el dashboard (Root Directory, comandos). La fuente real de la configuración es el dashboard, no el repo: hay *drift* y el próximo cambio manual puede romper el arranque. Ver `AGENTS.md` sección 8.
+1. **Sin CI/CD.** El push dispara el despliegue en Render y Vercel sin ejecutar antes `pytest`, `npm run lint` ni `npm run build`: un error solo se manifiesta en producción. Ver `AGENTS.md` sección 7.
+2. **Blueprint de Render no vinculado.** `render.yaml` describe `rootDir`, build y start, pero el servicio se configuró a mano en el dashboard (Root Directory, comandos). La fuente real de la configuración es el dashboard, no el repo: hay *drift* y el próximo cambio manual puede romper el arranque. Ver `AGENTS.md` sección 8.
+3. **Prompt y esquema del router desalineados.** El esquema permite combinaciones de trigger/operación poco consistentes (p. ej. una operación con `group_by` inválido). Falta validación cruzada entre `query_intent` y la operación elegida.
+4. **Advertencia de SDK obsoleto.** `google.generativeai` está deprecado a favor de `google.genai`. Funciona, pero conviene migrar.
+5. **Saludo inicial no se renderiza.** `ChatPanel.jsx` construye el mensaje de bienvenida con `text`, pero los mensajes del asistente se pintan vía `<AnswerCard payload={m.payload} />`. Verificar que el saludo lleve `payload` o que se renderice el `text`.
+6. **Campos muertos en el contrato.** Ver 9.3.
 
-> Resueltos en esta sesión: *"Dependencias ausentes en `requirements.txt`"* (ver 11.1) y *"v1 sin reubicar"* (ver 11.1, se eliminó el v1 completo del repositorio).
+> Resueltos en sesiones anteriores: *"Dependencias ausentes en `requirements.txt`"* (ver 11.1), *"v1 sin reubicar"* (ver 11.1) y, con el pivote a datos.gov.co, toda la deuda de Supabase ("RPCs sin desplegar", "acceso MCP por OAuth", "pregunta repetida idéntica" quedó sin objeto al rediseñar `App.jsx`).
 
 
 ---
@@ -433,3 +445,35 @@ El router fue probado directamente contra Gemini y devuelve confianzas no consta
 ### 11.3. Sobre las mediciones de latencia
 
 Las cifras de latencia obtenidas durante la sesion con OpenAI **no son representativas**. Correspondian a reintentos automaticos derivados del `429 insufficient_quota`, no al tiempo de inferencia. Cualquier benchmarking debe repetirse con `LLM_PROVIDER=gemini` antes de documentarse.
+
+---
+
+## 12. Pivote a datos.gov.co (IPS) — arquitectura vigente
+
+Las secciones 1 a 9 describen el diseño previo (analítica de sesiones sobre Supabase). **Esta sección es la fuente de verdad actual.** El 2026-10-09 el proyecto pivoteó a un asistente de BI sobre el dataset público de IPS de Colombia.
+
+### 12.1. Fuente de datos
+
+- **Dataset:** "Relación de IPS públicas y privadas según el nivel de atención y capacidad instalada" (MinSalud/REPS), id `s2ru-bqt6`, en `https://www.datos.gov.co/resource/s2ru-bqt6.json`.
+- **Endpoint correcto:** `/resource/` (SODA), que respeta `$select`, `$where`, `$group`, `$order` y `$limit`. **Nunca** usar `/api/v3/views/.../query.json`: ignora `$limit` y devuelve ~36 MB.
+- **Volumen:** 41.427 registros, 9.320 prestadores distintos, ~1.027 municipios, corte `2022-11-21` (congelado → cache en memoria seguro).
+- **Columnas:** `departamento`, `municipio`, `nombre_prestador`, `c_digo_prestador`, `nit_ips`, `naturaleza`, `num_nivel_atencion`, `nom_grupo_capacidad`, `num_cantidad_capacidad_instalada`, `nom_sede_ips`, `direcci_n`, `email`, `tel_fono`, `gerente`, `fecha_corte`, `fuente`.
+- **Cifras de referencia verificadas:** `count(*)`=41427, prestadores=9320, `sum(capacidad) where grupo='CAMAS'`=97036, naturaleza Privada=25067 / Pública=16174 / Mixta=186, Antioquia=4245, Bogotá D.C=4647, promedio capacidad=5.3.
+
+### 12.2. Capa determinista — `datosgov_service.py`
+
+- Constantes `CAPACITY_COLUMN`, `GROUP_CAPACITY_COLUMN`, `PRESTADOR_COLUMN` y `OPERATIONS` con 6 operaciones: `count_registros`, `count_prestadores`, `sum_capacity`, `avg_capacity`, `list_departamentos`, `group_by`.
+- `build_where()` arma el `$where` con valores **exactos** (el `lower()` de SoQL no quita acentos; toda canonicalización ocurre antes en `normalization.py`).
+- `DatosGovService` con `execute`/`fetch_records`/`dataset_info`; internos `_query`/`_scalar`/`_grouped`/`_math`/`_list_distinct`/`_resolve_municipio`. Los municipios llegan en MAYÚSCULAS y con acentos propios, y se resuelven contra un índice dinámico cacheado (24 h).
+- `sum_capacity` con `group_by` devuelve desglose + `total_capacidad`; sin `group_by` devuelve el escalar `total_capacidad`.
+- `GET /api/v1/dashboard` lanza varias operaciones en `asyncio.gather`.
+
+### 12.3. Router, Heavy Path y knowledge
+
+- `intent_router.py`: saludos (`_small_talk_reply`), definiciones de salud (`_definition_reply`, glosario de 13 términos), listados (`_list_intent`) y fuera de dominio se resuelven sin LLM. El LLM solo clasifica consultas de negocio; `_heuristic_fallback` hereda el dominio y asigna confianzas fijas (0.85/0.88/0.90).
+- `insights_service.py`: Heavy Path narra los KPIs (contexto TOON + `json.dumps`), con `_mock_fallback_insight` si el proveedor falla. Invariante: nunca calcula.
+- `knowledge_service.py` + `backend/data/knowledge_ips.json`: directrices locales (max 4 en el prompt), cache por `mtime`. Reemplaza a la vieja tabla `knowledge_auditoria`.
+
+### 12.4. Estado
+
+Ver `AGENTS.md` secciones 7 y 8 para estado, pendientes y despliegue. Suite: **68 pruebas pasan / 5 saltan** (`live_llm` opt-in con `NEXO_TEST_LIVE_LLM=1`).
