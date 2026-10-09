@@ -403,6 +403,13 @@ Registro de defectos detectados durante la implementación, con su estado actual
 
 18. **Suite de pruebas y documentación alineadas al dominio.** Se reescribieron `tests/conftest.py` (`FALLBACK_CONFIDENCES`, `make_decision`, `FakeLLM` con proveedor `groq`), los tests de router, endpoints y knowledge, y se añadió `tests/test_datosgov_service.py`. Resultado: **68 pasan / 5 saltan** (las `live_llm` siguen opt-in). `AGENTS.md` y `README.md` reescritos para IPS/datos.gov.co.
 
+19. **Integración de voz con Gemini Live (credenciales efímeras + tool al pipeline).** Se añadió una capa de voz sobre el chat existente, sin reemplazar la app ni el pipeline de texto. Decisiones: (a) **credenciales efímeras**, la `GEMINI_API_KEY` nunca viaja al navegador; (b) cualquier pregunta con cifras dispara una **herramienta** que reutiliza el pipeline determinista, conservando el invariante "el LLM nunca calcula números". Cambios por capa:
+    - **Backend**: `config.py` añade `GEMINI_LIVE_MODEL` (default `gemini-3.8-live`), `GEMINI_LIVE_TOKEN_TTL_MIN` (30) y `GEMINI_LIVE_NEW_SESSION_TTL_MIN` (1). Nuevo `services/live_token_service.py` (import perezoso de `google.genai`, nunca lanza; devuelve `ok=False`+`error`). El cuerpo de `process_user_query` se extrajo a `_execute_query(user_query)` para reusarlo; se añadieron `_to_plain_text()` y los endpoints `POST /api/v1/live/token` (503 si no hay acceso Live) y `POST /api/v1/live/tool`. `api_schemas.py` define `LiveTokenResponse`, `LiveToolRequest`, `LiveToolResponse`; `GET /api/v1/health` expone el bloque `live_voz`.
+    - **Dependencias**: `requirements.txt` incorpora `google-auth==2.61.0`, `google-genai==2.29.0`, `tenacity==9.1.4`, `websockets==16.1.1`.
+    - **Frontend**: `api.js` expone `getLiveToken()` y `askLiveTool(pregunta)`; `utils/pcmAudio.js` implementa captura PCM 16 kHz (AudioWorklet -> Int16 -> base64) y reproducción PCM 24 kHz; `hooks/useGeminiLive.js` pide permiso de micrófono, mintea el token, abre `ai.live.connect` (v1alpha, `responseModalities: [AUDIO]`, transcripciones, declaración de `consultar_ips`), envía audio en tramas de ~100 ms, reproduce la respuesta y responde la herramienta con `sendToolResponse`. `ChatPanel.jsx` añade un botón de micrófono (estados connecting/en vivo/error) y un panel de transcripción **asignada por turno** (no diarización). Se añade `@google/genai@^2.28.0` a `package.json`.
+    - **Pruebas**: 4 casos nuevos en `tests/test_api_endpoints.py` (token ok, token 503 sin acceso, `live/tool` reutiliza el pipeline en texto plano, pregunta vacía 422). Suite: **68 pasan / 5 saltan** y `npm run lint`/`npm run build` limpios.
+    - **Verificación (2026-10-09)**: `create_token` y una sesión real contra `gemini-3.8-live` responden OK (token efímero + WebSocket). Falta la prueba de audio en el navegador; ver 10.2 #7.
+
 ### 10.2. Pendientes
 
 1. **Sin CI/CD.** El push dispara el despliegue en Render y Vercel sin ejecutar antes `pytest`, `npm run lint` ni `npm run build`: un error solo se manifiesta en producción. Ver `AGENTS.md` sección 7.
@@ -411,6 +418,7 @@ Registro de defectos detectados durante la implementación, con su estado actual
 4. **Advertencia de SDK obsoleto.** `google.generativeai` está deprecado a favor de `google.genai`. Funciona, pero conviene migrar.
 5. **Saludo inicial no se renderiza.** `ChatPanel.jsx` construye el mensaje de bienvenida con `text`, pero los mensajes del asistente se pintan vía `<AnswerCard payload={m.payload} />`. Verificar que el saludo lleve `payload` o que se renderice el `text`.
 6. **Campos muertos en el contrato.** Ver 9.3.
+7. **Gemini Live verificado a nivel de protocolo; falta el audio del navegador.** La cuenta **sí tiene acceso** (probado 2026-10-09): `POST /api/v1/live/token` mintea la credencial y una sesión WebSocket real contra `gemini-3.8-live` se abre y responde. Falta la prueba de extremo a extremo en el navegador (permiso de micrófono, captura/reproducción PCM y la herramienta `consultar_ips`). Las credenciales efímeras siguen en Preview y solo en Gemini Developer API (`v1alpha`). La transcripción se asigna por turno (sin diarización acústica). Ver 13.
 
 > Resueltos en sesiones anteriores: *"Dependencias ausentes en `requirements.txt`"* (ver 11.1), *"v1 sin reubicar"* (ver 11.1) y, con el pivote a datos.gov.co, toda la deuda de Supabase ("RPCs sin desplegar", "acceso MCP por OAuth", "pregunta repetida idéntica" quedó sin objeto al rediseñar `App.jsx`).
 
@@ -477,3 +485,33 @@ Las secciones 1 a 9 describen el diseño previo (analítica de sesiones sobre Su
 ### 12.4. Estado
 
 Ver `AGENTS.md` secciones 7 y 8 para estado, pendientes y despliegue. Suite: **68 pruebas pasan / 5 saltan** (`live_llm` opt-in con `NEXO_TEST_LIVE_LLM=1`).
+
+---
+
+## 13. Voz (Gemini Live) — arquitectura vigente
+
+Capa añadida sobre el pipeline determinista; **no lo reemplaza**. El modelo Live narra; las cifras siguen viniendo de SoQL.
+
+### 13.1. Endpoints
+
+- `POST /api/v1/live/token` — mintea una credencial efímera (`auth_tokens`, `v1alpha`). Devuelve `{ token, model, expires_at, new_session_expires_at }`; **503** si el backend no puede mintear (sin `GEMINI_API_KEY`, sin acceso Live o error del SDK). La `GEMINI_API_KEY` nunca sale del backend.
+- `POST /api/v1/live/tool` — recibe `{ pregunta }`, ejecuta `_execute_query()` (mismo pipeline que `POST /api/v1/query`) y devuelve `{ respuesta, verificado }` en texto plano para que el modelo Live lo narre.
+- `GET /api/v1/health` — bloque `live_voz` con el modelo Live y si hay credenciales configuradas (nunca expone secretos).
+
+### 13.2. Frontend
+
+- `frontend/src/hooks/useGeminiLive.js` — `getUserMedia` → `getLiveToken()` → `ai.live.connect` (WebSocket, `Modality.AUDIO`, transcripciones input/output, tool `consultar_ips`). Envía tramas PCM de ~100 ms; al recibir `toolCall` llama a `askLiveTool` y responde con `sendToolResponse`. Expone `status`, `error`, `userText`, `modelText`, `start`, `stop`.
+- `frontend/src/utils/pcmAudio.js` — AudioWorklet de captura (Float32 → Int16 → base64, 16 kHz) y reproductor PCM 24 kHz con corte por barge-in.
+- `frontend/src/components/ChatPanel.jsx` — botón de micrófono (idle/connecting/en vivo/error) y panel de transcripción **asignada por turno**.
+
+### 13.3. Invariantes que la voz respeta
+
+1. **El LLM nunca calcula.** Toda cifra pasa por `consultar_ips` → SoQL.
+2. **La fuente externa es de solo lectura.** Igual que el chat.
+3. **La API key no sale del backend.** El cliente usa la credencial efímera de vida corta.
+
+### 13.4. Limitaciones conocidas
+
+- Cuenta con acceso Live **verificado** (token efímero + sesión WebSocket real contra `gemini-3.8-live`, 2026-10-09). Las credenciales efímeras siguen en Preview, solo Developer API.
+- **Sin diarización**: el hablante se infiere por turno, no por acústica.
+- El modelo por defecto es `gemini-3.8-live`, configurable con `GEMINI_LIVE_MODEL`; la alternativa documentada es `gemini-2.5-flash-native-audio-preview-12-2025`. Verificar la disponibilidad del modelo antes de afirmarla.

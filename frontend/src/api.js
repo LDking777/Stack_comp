@@ -54,4 +54,39 @@ async function getHealth() {
   }
 }
 
-export { getDashboard, askNexo, getHealth, API_BASE };
+async function getLiveToken() {
+  let res;
+  try {
+    res = await fetch(`${API_BASE}/api/v1/live/token`, { method: "POST" });
+  } catch (e) {
+    throw new Error(
+      `Backend no disponible en ${API_BASE} para iniciar la voz. (${e.message})`
+    );
+  }
+  if (!res.ok) {
+    let detail = "";
+    try {
+      detail = (await res.json())?.detail || "";
+    } catch {
+      /* respuesta sin cuerpo JSON */
+    }
+    throw new Error(
+      detail || `El backend respondió ${res.status} al pedir la credencial de voz.`
+    );
+  }
+  return res.json();
+}
+
+async function askLiveTool(pregunta) {
+  const res = await fetch(`${API_BASE}/api/v1/live/tool`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ pregunta }),
+  });
+  if (!res.ok) {
+    throw new Error(`El backend respondió ${res.status} a la herramienta de voz.`);
+  }
+  return res.json();
+}
+
+export { getDashboard, askNexo, getHealth, getLiveToken, askLiveTool, API_BASE };

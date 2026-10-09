@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Send, RotateCcw, X, MessageSquare } from "lucide-react";
+import { Send, RotateCcw, X, MessageSquare, Mic, MicOff, Loader2 } from "lucide-react";
 import AnswerCard from "./AnswerCard";
 import Markdown from "./Markdown";
+import { useGeminiLive } from "../hooks/useGeminiLive";
 
 const GREETING = {
   role: "assistant",
@@ -57,9 +58,28 @@ export default function ChatPanel({ ask, isThinking, pendingQuestion, onPendingH
   const inputRef = useRef(null);
   const lastQRef = useRef(null);
 
+  const handleUserUtterance = useCallback((text) => {
+    setMessages((prev) => [...prev, { role: "user", text }]);
+  }, []);
+  const handleAssistantAnswer = useCallback((text) => {
+    setMessages((prev) => [...prev, { role: "assistant", text }]);
+  }, []);
+
+  const live = useGeminiLive({
+    onUserUtterance: handleUserUtterance,
+    onAssistantAnswer: handleAssistantAnswer,
+  });
+  const voiceBusy = live.status === "requesting-permission" || live.status === "connecting";
+  const voiceOn = live.status === "connected";
+  const toggleVoice = useCallback(() => {
+    if (voiceBusy) return;
+    if (voiceOn) live.stop();
+    else live.start();
+  }, [voiceBusy, voiceOn, live]);
+
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-  }, [messages, isThinking]);
+  }, [messages, isThinking, live.userText, live.modelText]);
 
   useEffect(() => {
     if (open) setTimeout(() => inputRef.current?.focus(), 120);
@@ -120,10 +140,33 @@ export default function ChatPanel({ ask, isThinking, pendingQuestion, onPendingH
             </div>
             <div>
               <h4 className="font-bold text-xs text-slate-900 dark:text-white">Nexo IA</h4>
-              <p className="text-[10px] text-slate-400">Analista de datos de IPS · cifras verificadas</p>
+              <p className={`text-[10px] ${voiceOn ? "text-emerald-500 font-semibold" : "text-slate-400"}`}>
+                {live.status === "requesting-permission"
+                  ? "Pidiendo permiso de micrófono…"
+                  : live.status === "connecting"
+                    ? "Conectando a Gemini Live…"
+                    : voiceOn
+                      ? "● En vivo — habla ahora"
+                      : "Analista de datos de IPS · cifras verificadas"}
+              </p>
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <button
+              onClick={toggleVoice}
+              disabled={voiceBusy}
+              className={`p-1.5 rounded-lg transition-colors disabled:opacity-50 ${voiceOn ? "text-emerald-500 bg-emerald-500/10" : "text-slate-400 hover:text-slate-700 dark:hover:text-white"}`}
+              title={voiceOn ? "Terminar la voz" : "Conversar por voz (Gemini Live)"}
+              aria-label={voiceOn ? "Terminar conversación de voz" : "Iniciar conversación de voz"}
+            >
+              {voiceBusy ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : voiceOn ? (
+                <MicOff className="w-4 h-4" />
+              ) : (
+                <Mic className="w-4 h-4" />
+              )}
+            </button>
             <button onClick={restart} className="text-slate-400 hover:text-slate-700 dark:hover:text-white" title="Reiniciar conversación">
               <RotateCcw className="w-4 h-4" />
             </button>
@@ -147,6 +190,26 @@ export default function ChatPanel({ ask, isThinking, pendingQuestion, onPendingH
               </div>
             </div>
           ))}
+          {(live.userText || live.modelText) && (
+            <div className="flex flex-col gap-1.5 p-2.5 rounded-xl border border-emerald-500/20 bg-emerald-500/5">
+              <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider">
+                Transcripción en vivo · asignada por turno
+              </span>
+              {live.userText && (
+                <div className="text-xs text-slate-600 dark:text-slate-300">
+                  <span className="font-bold">Tú:</span> {live.userText}
+                </div>
+              )}
+              {live.modelText && (
+                <div className="text-xs text-slate-700 dark:text-slate-200">
+                  <span className="font-bold text-emerald-600 dark:text-emerald-400">Nexo:</span> {live.modelText}
+                </div>
+              )}
+            </div>
+          )}
+          {live.error && (
+            <div className="text-[10px] text-rose-500 font-mono">{live.error}</div>
+          )}
           {isThinking && <ThinkingBubble />}
         </div>
 
