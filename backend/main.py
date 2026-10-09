@@ -5,7 +5,7 @@ import logging
 from typing import Any, Dict, Optional
 
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile, status
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.config import settings
@@ -38,6 +38,7 @@ from backend.services.conversation_service import conversation_service
 from backend.services.document_service import document_service
 from backend.services.embeddings_service import embeddings_service
 from backend.services.supabase_service import supabase_service
+from backend.services.whatsapp_service import whatsapp_service
 
 # Configuración de logs
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -522,6 +523,76 @@ async def get_dashboard_data():
     }
 
 
+# ── WhatsApp Cloud API (Meta) Webhook ──
+@app.get("/api/v1/whatsapp/webhook", summary="Verificación del Webhook de WhatsApp (Meta Challenge)")
+async def verify_whatsapp_webhook(
+    hub_mode: Optional[str] = Query(None, alias="hub.mode"),
+    hub_verify_token: Optional[str] = Query(None, alias="hub.verify_token"),
+    hub_challenge: Optional[str] = Query(None, alias="hub.challenge"),
+):
+    """
+    Endpoint requerido por Meta para validar la URL del webhook.
+    Verifica que `hub.verify_token` coincida con `WHATSAPP_VERIFY_TOKEN`.
+    """
+    challenge = whatsapp_service.verify_webhook(hub_mode, hub_verify_token, hub_challenge)
+    if challenge is not None:
+        return Response(content=str(challenge), media_type="text/plain", status_code=200)
+    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Verificación de webhook fallida")
+
+
+@app.post("/api/v1/whatsapp/webhook", summary="Receptor de mensajes entrantes de WhatsApp")
+async def receive_whatsapp_webhook(request: Request):
+    """
+    Recibe notificaciones de mensajes entrantes desde WhatsApp Cloud API.
+    Procesa las preguntas a través del pipeline analítico de Nexo IA
+    y responde automáticamente al usuario conservando su historial por número de teléfono.
+    """
+    try:
+        payload = await request.json()
+    except Exception:
+        return {"status": "ignored", "reason": "invalid_json"}
+
+    messages = whatsapp_service.extract_messages(payload)
+    if not messages:
+        return {"status": "ok", "messages_found": 0}
+
+    async def _handle_single_message(msg: Dict[str, Any]):
+        sender_id = msg["sender_id"]
+        query_text = msg["text"]
+        session_id = f"wa_{sender_id}"
+
+        logger.info("📩 Mensaje recibido de WhatsApp [%s]: %s", sender_id, query_text)
+
+        try:
+            query_res = await _execute_query(user_query=query_text, session_id=session_id)
+            reply_text = query_res.formatted_message or "No se pudo generar respuesta para tu consulta."
+            await whatsapp_service.send_message(to_number=sender_id, text=reply_text)
+        except Exception as err:
+            logger.error("Error procesando consulta de WhatsApp para %s: %s", sender_id, err)
+            fallback_msg = (
+                "⚠️ Ocurrió un error procesando tu consulta en Nexo IA. "
+                "Por favor intenta con una pregunta como: *«¿Cuántas camas hay en Antioquia?»*"
+            )
+            await whatsapp_service.send_message(to_number=sender_id, text=fallback_msg)
+
+    # Procesar mensajes de forma concurrente en segundo plano para responder de inmediato a Meta (evita timeout de 20s)
+    for msg in messages:
+        asyncio.create_task(_handle_single_message(msg))
+
+    return {"status": "ok", "messages_queued": len(messages)}
+
+
+@app.get("/api/v1/whatsapp/config", summary="Configuración pública para el enlace web de WhatsApp")
+async def get_whatsapp_config():
+    """Retorna información pública para conectar al usuario con el bot de WhatsApp desde la web."""
+    return {
+        "enabled": bool(settings.WHATSAPP_PHONE_NUMBER or whatsapp_service.is_configured),
+        "phone_number": settings.WHATSAPP_PHONE_NUMBER,
+        "wa_link": whatsapp_service.get_public_url(),
+        "webhook_configured": whatsapp_service.is_configured,
+    }
+
+
 # 4. Healthcheck & Diagnóstico
 @app.get("/api/v1/health", summary="Verificación de estado de la arquitectura")
 async def healthcheck():
@@ -562,6 +633,11 @@ async def healthcheck():
             "model": settings.GEMINI_LIVE_MODEL,
             "credenciales": "efimeras (auth_tokens, v1alpha; Google Developer API)",
             "nota": "La GEMINI_API_KEY permanece en el backend; el navegador recibe solo el token de corta vida.",
+        },
+        "whatsapp": {
+            "configured": whatsapp_service.is_configured,
+            "phone_number_configured": bool(settings.WHATSAPP_PHONE_NUMBER),
+            "webhook_path": "/api/v1/whatsapp/webhook",
         },
         "documentos_rag": {
             "enabled": embeddings_service.available and persistence_health["ready"],

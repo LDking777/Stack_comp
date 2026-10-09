@@ -529,3 +529,30 @@ Capa añadida sobre el pipeline determinista; **no lo reemplaza**. El modelo Liv
 - Cuenta con acceso Live **verificado** (token efímero + sesión WebSocket real contra `gemini-3.8-live`, 2026-10-09). Las credenciales efímeras siguen en Preview, solo Developer API.
 - **Sin diarización**: el hablante se infiere por turno, no por acústica.
 - El modelo por defecto es `gemini-3.8-live`, configurable con `GEMINI_LIVE_MODEL`; la alternativa documentada es `gemini-2.5-flash-native-audio-preview-12-2025`. Verificar la disponibilidad del modelo antes de afirmarla.
+
+---
+
+## 14. Bot de WhatsApp (Meta Cloud API) — arquitectura vigente
+
+Permite a los usuarios consultar a Nexo IA directamente desde WhatsApp (24/7), reutilizando el pipeline determinista SoQL + Heavy Path con persistencia de memoria contextual aislada por número telefónico (`wa_{phone_number}`).
+
+### 14.1. Endpoints
+
+- `GET /api/v1/whatsapp/webhook` — Validación handshake de Meta: valida `hub.mode == "subscribe"` y `hub.verify_token == WHATSAPP_VERIFY_TOKEN`; responde `hub.challenge` como texto plano con HTTP 200.
+- `POST /api/v1/whatsapp/webhook` — Recepción de mensajes entrantes: extrae remitente y texto, despacha asíncronamente `_execute_query(user_query, session_id="wa_{from}")`, adapta el texto a formato WhatsApp (`format_whatsapp_text`) y envía la respuesta usando Meta Graph API (`POST https://graph.facebook.com/v21.0/{WHATSAPP_PHONE_NUMBER_ID}/messages`).
+- `GET /api/v1/whatsapp/config` — Expone el estado del bot y el enlace público `wa.me` para la interfaz web.
+
+### 14.2. Variables de entorno en `.env`
+
+```env
+WHATSAPP_TOKEN=EAAG...                  # Token de acceso de Meta Developer / System User
+WHATSAPP_PHONE_NUMBER_ID=12345678901234 # Phone Number ID de la API de WhatsApp
+WHATSAPP_VERIFY_TOKEN=nexo_verify_token # Token secreto para validar el webhook
+WHATSAPP_PHONE_NUMBER=573001234567      # Número público para enlaces wa.me
+```
+
+### 14.3. Frontend
+
+- Botón directo de WhatsApp en el header de navegación.
+- Tarjeta de canal oficial 24/7 en la portada (`HomePage`).
+- Componente `WhatsAppModal.jsx` con enlace directo wa.me, preguntas sugeridas para copiar/pegar y copia de URL de webhook para administradores.
