@@ -2,11 +2,13 @@
 
 Asistente de BI sobre el dataset público **"Relación de IPS públicas y privadas según el nivel de atención y capacidad instalada"** (MinSalud/REPS, `s2ru-bqt6` en datos.gov.co). El usuario pregunta en lenguaje natural ("¿cuántas camas hay en Antioquia?") y recibe cifras exactas más una interpretación narrativa.
 
-**El LLM nunca calcula números.** PostgreSQL ya no participa: toda la agregación la ejecuta Socrata vía **SoQL** (`$select`, `$where`, `$group`). El modelo solo clasifica la intención y narra.
+**El LLM nunca calcula números.** Socrata ejecuta toda agregación del dataset vía **SoQL** (`$select`, `$where`, `$group`). Supabase se usa solamente para persistir memoria del chat y documentos de RAG; no almacena los KPIs.
 
 - Backend: **FastAPI** + router LLM (Groq/Gemini/OpenAI), compresión TOON, Fast Path (KPIs) / Heavy Path (diagnóstico).
-- Frontend: **React + Vite**, tablero de cobertura y capacidad, y asistente **Nexo IA** (burbuja flotante). UI con **Tailwind vía CDN** (`index.html`).
-- Datos: **[datos.gov.co](https://www.datos.gov.co)**, dataset `s2ru-bqt6` — 41.427 registros, corte `2022-11-21`. Datos en vivo vía SoQL; sin base de datos propia.
+- Frontend: **React + Vite**, tablero de cobertura y capacidad, y asistente **Nexo IA**. En portada el chat permanece junto al avatar; en el dashboard conserva el acceso flotante. UI con **Tailwind vía CDN** (`index.html`).
+- Rutas del frontend: `/` muestra la portada con avatar y conversación persistente, ajustada al alto disponible en escritorio y compacta junto al chat en móviles; en tablets y pantallas cortas puede desplazarse si el contenido excede el viewport. `/dashboard` mantiene accesible el tablero BI con chat flotante.
+- Datos: **[datos.gov.co](https://www.datos.gov.co)**, dataset `s2ru-bqt6` — 41.427 registros, corte `2022-11-21`. Datos en vivo vía SoQL.
+- Memoria/RAG: **Supabase Postgres + pgvector + Storage privado**. El esquema está en [`supabase_mvp.sql`](supabase_mvp.sql).
 
 Documentación completa: [`AGENTS.md`](AGENTS.md) (guía de trabajo) y [`ARQUITECTURA_FLUJO_INTENCIONES.md`](ARQUITECTURA_FLUJO_INTENCIONES.md) (arquitectura y bitácora).
 
@@ -26,14 +28,19 @@ python -m venv venv
 pip install -r requirements.txt
 ```
 
-Configura `.env` en la raíz (gitignored) con, al menos:
+Configura `.env` en la raíz (gitignored) con:
 
 ```
 LLM_PROVIDER=groq
 GROQ_API_KEY=...
+SUPABASE_URL=https://<project-ref>.supabase.co
+SUPABASE_SECRET_KEY=...
+GEMINI_API_KEY=...
 ```
 
-No se necesitan credenciales de base de datos: la fuente es la API pública de datos.gov.co.
+Antes, pega [`supabase_mvp.sql`](supabase_mvp.sql) en **Supabase → SQL Editor** y ejecútalo. Configura la clave `SUPABASE_SECRET_KEY` (o el nombre legado `SUPABASE_SERVICE_ROLE_KEY`) solo en el backend (por ejemplo, Render); nunca la pongas en variables `VITE_*` ni en el frontend. `GEMINI_API_KEY` se usa para crear embeddings de documentos.
+
+Al indexar un archivo, el original queda en el bucket privado de Supabase; el texto se envía a Gemini para crear embeddings y los fragmentos pertinentes pueden enviarse al proveedor LLM configurado para responder. No subas documentos que no estés autorizado a procesar.
 
 Levanta la API:
 
@@ -41,7 +48,7 @@ Levanta la API:
 .\venv\Scripts\uvicorn.exe backend.main:app --host 127.0.0.1 --port 8000
 ```
 
-Comprobación: `GET http://127.0.0.1:8000/api/v1/health` devuelve `provider`, modelos efectivos y el bloque `fuente_datos` (dataset, recurso y operaciones disponibles).
+Comprobación: `GET http://127.0.0.1:8000/api/v1/health` debe indicar `status: online`, `persistencia.configured: true` y `documentos_rag.enabled: true`. Si Supabase no está configurado, la API indica `degraded` y las funciones con sesión no se degradan silenciosamente a memoria volátil.
 
 > `uvicorn` debe lanzarse desde la raíz del repo: todo el código importa `from backend...`.
 
@@ -72,6 +79,9 @@ Las que llaman al proveedor real llevan el marker `live_llm` y no corren por def
 | POST | `/api/v1/query` | Flujo de intenciones (router → SoQL → respuesta/narrativa). |
 | GET | `/api/v1/dashboard` | KPIs y desgloses agregados para el tablero. |
 | GET | `/api/v1/health` | Estado, diagnóstico del LLM y metadatos de la fuente. |
+| POST | `/api/v1/documents` | Indexa documento relacionado con salud/IPS y guarda original privado en Supabase Storage. |
+| GET/DELETE | `/api/v1/documents/{session_id}` | Lista o elimina documentos, vectores, originales y memoria de una sesión. |
+| DELETE | `/api/v1/sessions/{session_id}/history` | Reinicia solo la memoria conversacional sin borrar documentos. |
 
 Consulta rápida:
 
@@ -85,7 +95,7 @@ Invoke-RestMethod -Uri "http://127.0.0.1:8000/api/v1/query" -Method Post `
 
 | Pieza | Servicio | Config |
 | --- | --- | --- |
-| API | Render (`stack-comp.onrender.com`) | `render.yaml` (Blueprint) + secretos en el dashboard |
+| API | Render (`stack-comp.onrender.com`) | `render.yaml` (Blueprint) + Groq, Gemini y Supabase secrets en el dashboard |
 | Frontend | Vercel (`stack-comp.vercel.app`) | variable `VITE_API_URL` |
 
 Reglas que ya costaron un despliegue roto:
