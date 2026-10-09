@@ -17,6 +17,7 @@ export default function App() {
   const [error, setError] = useState(null);
   const [thinking, setThinking] = useState(false);
   const [pendingQ, setPendingQ] = useState(null);
+  const [consolePendingQ, setConsolePendingQ] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [activeView, setActiveView] = useState("cognitive"); // 'cognitive' | 'bi' | 'pitch'
   const [soundOn, setSoundOn] = useState(isSoundEnabled());
@@ -65,6 +66,11 @@ export default function App() {
 
   const openChatWith = useCallback((question) => {
     setPendingQ(question ?? "");
+  }, []);
+
+  const openConsoleWith = useCallback((question) => {
+    setConsolePendingQ(question ?? "");
+    setActiveView("cognitive");
   }, []);
 
   const handleSoundToggle = () => {
@@ -190,6 +196,9 @@ export default function App() {
             sidebarOpen={sidebarOpen}
             setSidebarOpen={setSidebarOpen}
             onOpenPitch={() => setActiveView("pitch")} 
+            onAskAI={handleAsk}
+            initialQuestion={consolePendingQ}
+            onClearInitialQuestion={() => setConsolePendingQ(null)}
           />
         )}
         {activeView === "bi" && (
@@ -199,12 +208,16 @@ export default function App() {
             error={error}
             onRetry={fetchDashboard}
             onInspect={openChatWith}
+            onVoiceInspect={openConsoleWith}
             sidebarOpen={sidebarOpen}
             setSidebarOpen={setSidebarOpen}
           />
         )}
         {activeView === "pitch" && (
-          <PitchSection onExploreDashboard={() => setActiveView("cognitive")} />
+          <PitchSection 
+            onExploreDashboard={() => setActiveView("cognitive")} 
+            onExploreWithQuestion={(q) => openConsoleWith(q)}
+          />
         )}
       </div>
 

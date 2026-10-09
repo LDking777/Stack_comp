@@ -181,6 +181,7 @@ Estas cosas fallan **en silencio**. Un cambio puede romper el sistema sin que ni
 8. **`VITE_API_URL` con barra final.** `api.js` concatena `...onrender.com/` + `/api/v1/...` = `//api/v1/...`, que Starlette no matchea: 404 `{"detail":"Not Found"}`. `API_BASE` ya recorta barras, pero el valor limpio sigue siendo el correcto. Además Vite inyecta `VITE_*` **en el build**: cambiar la variable sin redeployar no hace nada.
 9. **Deploy sin push.** Vercel y Render despliegan lo que hay en `Stack_comp`, no tu disco. Un commit local no despliega nada; la verificación es ver el bundle/nombre del asset cambiado, no asumir.
 10. **`sum_capacity` sin `group_by` es un total.** En `datosgov_service.execute()`, `sum_capacity` con `group_by` devuelve desglose + `total_capacidad`; sin `group_by` devuelve solo `total_capacidad` (escalar). No es un error.
+11. **Nombre y ruta del `.env`.** El archivo debe nombrarse estrictamente `.env` (con punto inicial). `backend/config.py` resuelve la ruta de forma absoluta respecto a la raíz del proyecto para evitar que `uvicorn` o invocaciones desde subdirectorios dejen las variables vacías.
 
 ---
 
@@ -194,6 +195,10 @@ Al día de hoy el sistema corre sobre **datos.gov.co** (Socrata/SoQL); Supabase 
 - **Knowledge local** del asistente con 8 directrices (capacidad, cobertura, gestión, calidad de datos). Si falta el archivo, el Heavy Path sigue sin directrices.
 - **Preguntas de definición/fuera de dominio con guía.** `intent_router.py` resuelve "¿qué es una IPS?" con un glosario determinista (`_definition_reply`, sin LLM), saludos y capacidades (`_small_talk_reply`) y listados (`_list_intent`).
 - **UI**: tema claro/oscuro persistido (`ThemeContext`) y acento emerald. El chat se llama **NEXO IA**.
+- **Integración fluida de la conversación con IA en el frontend**: La conversación con Nexo IA ahora está integrada directamente en los tres apartados principales del frontend:
+  - **Consola Vocal Cognitiva (`CognitiveDashboard`)**: Infiere con la IA de Nexo (`askNexo` / SoQL + LLM) por voz y texto, retroalimenta con síntesis de voz TTS, y conecta las preguntas del visor de datos con la IA con un clic.
+  - **Tablero BI (`BIDashboard`)**: Bloque interactivo de conversación rápida con input, chips de preguntas recomendadas y botones para inspeccionar métricas o derivar la pregunta a la consola vocal.
+  - **Pitch & Arquitectura (`PitchSection`)**: Botones interactivos en los pasos del guion de demo (resumen, detalle fino y fuera de dominio) que ejecutan la consulta con la IA en vivo.
 - **Voz con Gemini Live.** El backend mintea credenciales efímeras (`POST /api/v1/live/token`, la `GEMINI_API_KEY` no sale del server) y el navegador conversa por WebSocket (`gemini-3.8-live`). Las preguntas con cifras disparan la herramienta `consultar_ips` → `POST /api/v1/live/tool` → mismo pipeline SoQL. El chat de texto sigue intacto; la transcripción se asigna por turno (sin diarización). **Conexión real verificada** (2026-10-09): token efímero + sesión WebSocket contra `gemini-3.8-live` responden OK.
 
 Pendientes, en orden de impacto:
