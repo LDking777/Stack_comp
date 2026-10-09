@@ -8,14 +8,14 @@ import { createMicCapture, createPcmPlayer, bytesToBase64 } from "../utils/pcmAu
 // proyecto: el LLM nunca calcula números (AGENTS.md §1).
 const SYSTEM_INSTRUCTION = `Eres Nexo IA, el asistente por voz de datos de IPS (instituciones prestadoras de servicios de salud) de Colombia, sobre el dataset público de datos.gov.co.
 
-REGLA ABSOLUTA: nunca inventes ni calcules cifras. Para cualquier pregunta sobre números, conteos, camas, capacidad instalada, cobertura, departamentos, naturaleza (pública/privada/mixta) o niveles de atención, llama SIEMPRE a la herramienta consultar_ips y narra únicamente lo que devuelva. Si no hay dato, dilo con franqueza.
+REGLA ABSOLUTA: nunca inventes ni calcules cifras. Para preguntas de números, conteos, camas, capacidad instalada, cobertura, departamentos, naturaleza (pública/privada/mixta), niveles de atención, búsqueda de sedes o teléfonos institucionales, llama SIEMPRE a consultar_ips y narra únicamente lo que devuelva. Si no hay dato, dilo con franqueza.
 
-Responde en español, en frases cortas y naturales, apropiadas para ser escuchadas. Si la pregunta está fuera del dominio de IPS colombianas, indícalo brevemente y ofrece un ejemplo de pregunta válida.`;
+Responde ÚNICAMENTE en español, en frases cortas y naturales, apropiadas para ser escuchadas. Mantén el español aunque el usuario hable o solicite otro idioma; nunca traduzcas tu respuesta. Si la pregunta está fuera del dominio de IPS colombianas, indícalo brevemente y ofrece un ejemplo de pregunta válida.`;
 
 const CONSULTAR_IPS = {
   name: "consultar_ips",
   description:
-    "Obtiene cifras EXACTAS y verificadas del dataset público de IPS de Colombia (datos.gov.co). Úsala siempre que la pregunta requiera números, capacidades, coberturas, comparaciones o diagnósticos. Devuelve texto plano verificado.",
+    "Obtiene datos EXACTOS y verificados del dataset público de IPS de Colombia (datos.gov.co). Úsala para cifras, capacidades, coberturas, comparación de sedes y teléfonos institucionales publicados. Devuelve solo el texto verificado.",
   parameters: {
     type: "object",
     properties: {
