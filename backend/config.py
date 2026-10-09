@@ -4,7 +4,7 @@ import os
 
 class Settings(BaseSettings):
     # App Config
-    APP_NAME: str = "Nexo IA - Arquitectura MVP Flujo de Intenciones"
+    APP_NAME: str = "Nexo IA - Analítica de IPS de Colombia (datos.gov.co)"
     APP_ENV: str = "development"
     PORT: int = 8000
     DEBUG: bool = True
@@ -46,10 +46,9 @@ class Settings(BaseSettings):
     ROUTER_TIMEOUT_S: float = 45.0
     INSIGHTS_TIMEOUT_S: float = 90.0
     
-    # Supabase Credentials
-    SUPABASE_URL: str = ""
-    SUPABASE_KEY: str = ""
-    SUPABASE_SECRET_KEY: str = ""
+    # Fuente de datos publica: datos.gov.co (Socrata SODA / SoQL)
+    # Nunca usar api/v3/views/<id>/query.json: ignora $limit y devuelve ~36 MB.
+    DATOS_GOV_RESOURCE_URL: str = "https://www.datos.gov.co/resource/s2ru-bqt6.json"
 
     # Model Context Protocol (MCP) Config
     MCP_ENABLED: bool = True
