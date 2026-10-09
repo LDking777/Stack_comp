@@ -416,6 +416,7 @@ evios.11. **El azul sobrevivía en el resto de la web.** El tema monocromo origi
 
 20. **Chat persistente junto al avatar en la portada.** Se movió el `ChatPanel` a la columna derecha de `/`, al lado del avatar cuadrado a la izquierda; ya no hay burbuja flotante en esa ruta. `/dashboard` conserva el widget flotante. En pantallas estrechas, las columnas se apilan y el área de mensajes mantiene scroll propio. Verificado con `npm run build` y `npm run lint`; lint conserva advertencias previas no bloqueantes.
 21. **Portada desbordada y avatar pequeño.** La altura mínima fija provocaba desborde y el límite del avatar no aprovechaba el espacio libre. La portada desktop usa el alto dinámico del viewport y escala la imagen hasta 520 px según espacio; tablet/móvil compacta identidad y chat, con avatar hasta 300 px en tablet y 190 px en teléfonos. Se ajusta también la altura del chat móvil para conservar el área de conversación dentro del viewport habitual.
+22. **Prototipo de avatar vocal descartado.** Se probó un overlay animado de boca sincronizado de forma aproximada con la salida de audio; tras la revisión visual, se retiró porque no se veía bien. La portada mantiene el avatar estático y la conversación de voz no depende de animación.
 
 ### 10.2. Pendientes
 
@@ -459,6 +460,8 @@ evios.11. **El azul sobrevivía en el resto de la web.** El tema monocromo origi
 28. **Chat permanente y distribución final de portada.** Se sustituyó el CTA y la burbuja de chat de `/` por el `ChatPanel` persistente a la derecha del avatar cuadrado. El chat flotante se monta solo en `/dashboard`; se conservan carga RAG, historial, voz y controles de sesión. `README.md` y `AGENTS.md` describen las dos rutas y `npm run build` terminó correctamente.
 29. **Ajuste de portada al alto de pantalla.** La composición desktop se limita al viewport disponible bajo el header y evita el desborde vertical; los tamaños de avatar y chat responden al alto real. En anchos compactos se conserva el apilado y desplazamiento para que no se comprima el chat.
 30. **Avatar más grande y mejor aprovechamiento del espacio.** Se aumentó el límite responsivo en escritorio/tablet y el bloque cuadrado en móviles, conservando el diseño de texto compacto en paralelo. Build y lint verificados.
+31. **Prototipo de animación vocal del avatar descartado.** Se probó una boca superpuesta sincronizada de forma aproximada al audio Gemini Live, pero el usuario pidió retirarla porque no se veía bien. La portada vuelve a mostrar el avatar estático; la conversación y reproducción de voz siguen funcionando igual. Se conserva la corrección del reproductor PCM para detener las fuentes de audio activas al interrumpir.
+32. **Transcripción de voz ausente del historial del chat.** Gemini ya enviaba la transcripción de salida, pero solo se mostraba temporalmente; al terminar el turno se agregaba al historial únicamente la respuesta de la herramienta de datos. Ahora el hook acumula la transcripción completa y la agrega al historial junto con la intervención del usuario. Si no llega transcripción de salida, usa la respuesta verificada de la herramienta como respaldo. El historial existente en localStorage conserva estos mensajes igual que los demás.
 
 ### 11.2. Pendiente de confirmacion
 
