@@ -1,11 +1,12 @@
 import asyncio
+import json
 import re
 import time
 import logging
 from typing import Any, Dict, Optional
 
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile, status
+from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.config import settings
@@ -38,6 +39,7 @@ from backend.services.conversation_service import conversation_service
 from backend.services.document_service import document_service
 from backend.services.embeddings_service import embeddings_service
 from backend.services.supabase_service import supabase_service
+from backend.services.whatsapp_service import whatsapp_service
 
 # Configuración de logs
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -523,6 +525,107 @@ async def get_dashboard_data():
     }
 
 
+# ── WhatsApp Cloud API (Meta) ──
+@app.get("/api/v1/whatsapp/webhook", summary="Verificación del webhook de WhatsApp")
+async def verify_whatsapp_webhook(
+    hub_mode: Optional[str] = Query(None, alias="hub.mode"),
+    hub_verify_token: Optional[str] = Query(None, alias="hub.verify_token"),
+    hub_challenge: Optional[str] = Query(None, alias="hub.challenge"),
+):
+    if not whatsapp_service.webhook_configured:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="El webhook de WhatsApp no está configurado.",
+        )
+
+    challenge = whatsapp_service.verify_webhook(
+        hub_mode, hub_verify_token, hub_challenge
+    )
+    if challenge is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Verificación de webhook fallida.",
+        )
+    return Response(content=challenge, media_type="text/plain", status_code=200)
+
+
+@app.post("/api/v1/whatsapp/webhook", summary="Recepción de mensajes de WhatsApp")
+async def receive_whatsapp_webhook(
+    request: Request,
+    background_tasks: BackgroundTasks,
+):
+    if not whatsapp_service.webhook_configured:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="El webhook de WhatsApp no está configurado.",
+        )
+
+    raw_body = await request.body()
+    signature = request.headers.get("X-Hub-Signature-256", "")
+    if not whatsapp_service.verify_signature(raw_body, signature):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Firma del webhook inválida.",
+        )
+
+    try:
+        payload = json.loads(raw_body)
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El cuerpo del webhook no contiene JSON válido.",
+        ) from exc
+
+    if not isinstance(payload, dict) or payload.get("object") != "whatsapp_business_account":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El webhook no corresponde a una cuenta de WhatsApp Business.",
+        )
+
+    messages = whatsapp_service.extract_messages(payload)
+    if not messages:
+        return {"status": "ok", "messages_queued": 0}
+
+    async def handle_single_message(message: Dict[str, Any]) -> None:
+        message_id = message["message_id"]
+        sender_id = message["sender_id"]
+        try:
+            query_response = await _execute_query(
+                user_query=message["text"],
+                session_id=f"wa_{sender_id}",
+            )
+            reply_text = (
+                query_response.formatted_message
+                or "No se pudo generar respuesta para tu consulta."
+            )
+        except Exception:
+            logger.exception(
+                "Error procesando mensaje de WhatsApp (id=%s).", message_id
+            )
+            reply_text = (
+                "Ocurrió un error procesando tu consulta en Nexo IA. "
+                "Intenta de nuevo más tarde."
+            )
+
+        await whatsapp_service.send_message(sender_id, reply_text)
+
+    for message in messages:
+        background_tasks.add_task(handle_single_message, message)
+
+    return {"status": "ok", "messages_queued": len(messages)}
+
+
+@app.get("/api/v1/whatsapp/config", summary="Configuración pública del canal WhatsApp")
+async def get_whatsapp_config():
+    return {
+        "enabled": whatsapp_service.webhook_configured
+        and bool(whatsapp_service.get_public_url()),
+        "phone_number": settings.WHATSAPP_PHONE_NUMBER,
+        "wa_link": whatsapp_service.get_public_url(),
+        "webhook_configured": whatsapp_service.webhook_configured,
+    }
+
+
 # 4. Healthcheck & Diagnóstico
 @app.get("/api/v1/health", summary="Verificación de estado de la arquitectura")
 async def healthcheck():
@@ -563,6 +666,11 @@ async def healthcheck():
             "model": settings.GEMINI_LIVE_MODEL,
             "credenciales": "efimeras (auth_tokens, v1alpha; Google Developer API)",
             "nota": "La GEMINI_API_KEY permanece en el backend; el navegador recibe solo el token de corta vida.",
+        },
+        "whatsapp": {
+            "configured": whatsapp_service.webhook_configured,
+            "phone_number_configured": bool(settings.WHATSAPP_PHONE_NUMBER),
+            "webhook_path": "/api/v1/whatsapp/webhook",
         },
         "documentos_rag": {
             "enabled": embeddings_service.available and persistence_health["ready"],

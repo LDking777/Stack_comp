@@ -1,6 +1,6 @@
-import { Activity, ShieldCheck } from "lucide-react";
+import { Activity, MessageCircle, ShieldCheck } from "lucide-react";
 
-export default function HomePage({ children }) {
+export default function HomePage({ children, onOpenWhatsApp }) {
   return (
     <main className="home-page">
       <div className="home-grid-glow" aria-hidden="true" />
@@ -45,6 +45,16 @@ export default function HomePage({ children }) {
               <Activity size={17} />
               <span>Especializada en IPS de Colombia</span>
             </div>
+            {onOpenWhatsApp && (
+              <button
+                type="button"
+                className="home-assurance-action"
+                onClick={onOpenWhatsApp}
+              >
+                <MessageCircle size={17} />
+                <span>Disponible en WhatsApp</span>
+              </button>
+            )}
           </div>
         </div>
 

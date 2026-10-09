@@ -1,13 +1,19 @@
 import { useState, useEffect, useCallback } from "react";
-import { getDashboard, askNexo, getOrCreateSessionId } from "./api";
+import {
+  getDashboard,
+  askNexo,
+  getOrCreateSessionId,
+  getWhatsAppConfig,
+} from "./api";
 import { useTheme } from "./context/ThemeContext";
 import { toggleSoundEnabled, isSoundEnabled } from "./utils/soundEffects";
 import BIDashboard from "./components/BIDashboard";
 import ChatPanel from "./components/ChatPanel";
 import HomePage from "./pages/HomePage";
 import ToastContainer, { showToast } from "./components/ToastContainer";
-import { Menu, Volume2, VolumeX, Moon, Sun, Database, MapPin, LayoutDashboard, House } from "lucide-react";
+import { Menu, Volume2, VolumeX, Moon, Sun, Database, MapPin, LayoutDashboard, House, MessageCircle } from "lucide-react";
 import "./App.css";
+import WhatsAppModal from "./components/WhatsAppModal";
 
 export default function App() {
   const { theme, toggleTheme } = useTheme();
@@ -20,6 +26,8 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [soundOn, setSoundOn] = useState(isSoundEnabled());
   const [sessionId] = useState(() => getOrCreateSessionId());
+  const [waConfig, setWaConfig] = useState(null);
+  const [waModalOpen, setWaModalOpen] = useState(false);
   const isDashboard = pathname === "/dashboard";
 
   useEffect(() => {
@@ -51,6 +59,23 @@ export default function App() {
   useEffect(() => {
     if (isDashboard) fetchDashboard();
   }, [fetchDashboard, isDashboard]);
+
+  useEffect(() => {
+    let isMounted = true;
+    getWhatsAppConfig()
+      .then((config) => {
+        if (isMounted) setWaConfig(config);
+      })
+      .catch((err) => {
+        if (isMounted) {
+          setWaConfig({ enabled: false });
+          showToast("WhatsApp no disponible", err.message);
+        }
+      });
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const handleAsk = useCallback(async (question, options = {}) => {
     setThinking(true);
@@ -119,6 +144,17 @@ export default function App() {
                 <span>Dashboard</span>
               </a>
             )}
+            {waConfig?.enabled && (
+              <button
+                type="button"
+                onClick={() => setWaModalOpen(true)}
+                title="Conectar con Nexo IA en WhatsApp"
+                className="home-nav-button"
+              >
+                <MessageCircle size={15} />
+                <span>WhatsApp</span>
+              </button>
+            )}
             <button onClick={handleSoundToggle} title="Activar/Desactivar micro-sonidos" className="p-2 rounded-lg text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 dark:text-slate-400 transition-colors">
               {soundOn ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
             </button>
@@ -150,7 +186,11 @@ export default function App() {
           />
         </div>
       ) : (
-        <HomePage>
+        <HomePage
+          onOpenWhatsApp={
+            waConfig?.enabled ? () => setWaModalOpen(true) : undefined
+          }
+        >
           <ChatPanel
             embedded
             ask={handleAsk}
@@ -171,6 +211,12 @@ export default function App() {
           sessionId={sessionId}
         />
       )}
+
+      <WhatsAppModal
+        isOpen={waModalOpen}
+        onClose={() => setWaModalOpen(false)}
+        config={waConfig}
+      />
 
       <ToastContainer />
     </div>

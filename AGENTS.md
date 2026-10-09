@@ -58,6 +58,7 @@ api-service-v2/
 │       ├── document_service.py # Extracción, filtro de dominio y RAG de documentos
 │       ├── embeddings_service.py # Vectores Gemini para búsqueda semántica
 │       ├── supabase_service.py # PostgREST + Storage con service_role solo backend
+│       ├── whatsapp_service.py # Firma Meta y mensajería Cloud API
 │       └── live_token_service.py # Credenciales efímeras para Gemini Live (voz)
 ├── frontend/                   # React + Vite (desplegado en Vercel)
 │   ├── public/avatar.jpg       # Avatar de la portada del agente
@@ -72,7 +73,8 @@ api-service-v2/
 │           ├── BIDashboard.jsx # KPIs, desgloses por departamento/naturaleza/capacidad
 │           ├── ChatPanel.jsx   # Chat embebido en portada y flotante en dashboard
 │           ├── Markdown.jsx    # Render mínimo de markdown para respuestas del bot
-│           └── AnswerCard.jsx  # Render de respuestas estructuradas
+│           ├── AnswerCard.jsx  # Render de respuestas estructuradas
+│           └── WhatsAppModal.jsx # Conexión y preguntas agregadas para WhatsApp
 ├── tests/                      # pytest (pytest.ini: testpaths=tests)
 ├── render.yaml                 # Blueprint de Render: rootDir, build, start, envVars
 ├── requirements.txt            # Dependencias del backend (fuente única)
@@ -207,6 +209,7 @@ Los KPIs siguen viniendo exclusivamente de **datos.gov.co** (Socrata/SoQL). Supa
 - **Memoria y documentos por sesión**: `supabase_mvp.sql` crea tablas con RLS, búsqueda pgvector y bucket privado. El backend persiste historial, fragmentos, embeddings y archivo original; el frontend conserva el `session_id` y el historial visible local. Embeddings con Gemini y el prompt RAG limitan documentos/preguntas al dominio IPS/salud de Colombia. Requiere ejecutar el SQL y configurar `SUPABASE_URL`, `SUPABASE_SECRET_KEY` (o `SUPABASE_SERVICE_ROLE_KEY`) y `GEMINI_API_KEY` en el backend. La conexión real de DB, búsqueda y limpieza se probó el 2026-10-09 con contenido sintético temporal.
 - **Análisis agregado de IPS.** El router cubre ubicación, naturaleza, nivel de atención y grupos y descripciones de capacidad de `nom_descripcion_capacidad` (por ejemplo, pediátrica, urgencias, cirugía, neonatal y salud mental). Los agregados aceptan filtros y desglose por estas dimensiones; `fetch_records()` solo trae esas columnas y cantidad. Se excluyen códigos, nombres, NIT, sedes identificables y datos de contacto del chat, del contexto LLM y de la muestra del dashboard. Los conteos totales de IPS siguen disponibles sin exponer sus identificadores.
 - **Voz con Gemini Live.** El backend mintea credenciales efímeras (`POST /api/v1/live/token`, la `GEMINI_API_KEY` no sale del server) y el navegador conversa por WebSocket (`gemini-3.8-live`). Las preguntas con cifras disparan la herramienta `consultar_ips` → `POST /api/v1/live/tool` → mismo pipeline SoQL. El chat de texto sigue intacto; al completar cada turno, las transcripciones del usuario y de la respuesta hablada se agregan al historial visible y persistente del chat. Si Gemini no entrega transcripción de salida, se muestra como respaldo la respuesta verificada de la herramienta. No hay diarización acústica. El avatar de portada permanece estático durante la conversación. **Conexión real verificada** (2026-10-09): token efímero + sesión WebSocket contra `gemini-3.8-live` responden OK.
+- **Canal WhatsApp (Meta Cloud API).** `GET/POST /api/v1/whatsapp/webhook` valida el handshake y la firma HMAC-SHA256 de los eventos entrantes. Los mensajes se procesan con `_execute_query()` y memoria aislada por remitente; `GET /api/v1/whatsapp/config` publica solo el enlace y número del canal. Requiere `WHATSAPP_ENABLED`, `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_VERIFY_TOKEN`, `WHATSAPP_APP_SECRET` y `WHATSAPP_PHONE_NUMBER`; configurar secretos únicamente en el backend.
 
 Pendientes, en orden de impacto:
 
@@ -216,6 +219,7 @@ Pendientes, en orden de impacto:
 4. **`google.generativeai` deprecado**, migrar a `google.genai`.
 5. **Saludo inicial de `ChatPanel.jsx`**: verifica que se renderice (lleva `text` y no `payload`).
 6. **Gemini Live verificado a nivel de protocolo; falta el audio del navegador.** La cuenta **sí tiene acceso**: `POST /api/v1/live/token` mintea la credencial y una sesión real contra `gemini-3.8-live` se abre y responde (probado 2026-10-09). Falta la prueba de extremo a extremo en el navegador (permiso de micrófono, captura/reproducción PCM y la herramienta `consultar_ips`). Las credenciales efímeras siguen en Preview y solo en Gemini Developer API (`v1alpha`).
+7. **WhatsApp requiere configuración en producción.** Antes de habilitarlo, configurar sus secretos/valores en Render; después registrar en Meta la URL del backend (`VITE_API_URL` + `/api/v1/whatsapp/webhook`) y el mismo `WHATSAPP_VERIFY_TOKEN`. Aún no se ha desplegado ni probado con una cuenta real de Meta.
 
 El detalle completo de errores corregidos y pendientes vive en las secciones 10 y 11 de `ARQUITECTURA_FLUJO_INTENCIONES.md`. Actualiza esa bitácora al cerrar cada tarea.
 
@@ -234,7 +238,7 @@ Configuración real del servicio en Render (hoy en el dashboard, no sincronizada
 - **Build Command:** `pip install -r requirements.txt`
 - **Start Command:** `uvicorn backend.main:app --host 0.0.0.0 --port $PORT`
 - **Health Check Path:** `/api/v1/health`
-- **Variables:** `LLM_PROVIDER=groq`, modelos Groq y `GROQ_API_KEY` (secretos a mano en el dashboard). Para memoria/RAG: `SUPABASE_URL`, `SUPABASE_SECRET_KEY` (o la legacy `SUPABASE_SERVICE_ROLE_KEY`) y `GEMINI_API_KEY` (solo backend; nunca `VITE_*`). Para la voz: opcional `GEMINI_LIVE_MODEL` (por defecto `gemini-3.8-live`).
+- **Variables:** `LLM_PROVIDER=groq`, modelos Groq y `GROQ_API_KEY` (secretos a mano en el dashboard). Para memoria/RAG: `SUPABASE_URL`, `SUPABASE_SECRET_KEY` (o la legacy `SUPABASE_SERVICE_ROLE_KEY`) y `GEMINI_API_KEY` (solo backend; nunca `VITE_*`). Para la voz: opcional `GEMINI_LIVE_MODEL` (por defecto `gemini-3.8-live`). Para WhatsApp: `WHATSAPP_ENABLED`, `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_VERIFY_TOKEN`, `WHATSAPP_APP_SECRET` y el número público `WHATSAPP_PHONE_NUMBER`.
 
 En Vercel: `VITE_API_URL=https://stack-comp.onrender.com` sin `/` final, y todo cambio de variable exige redeploy (ver trampa 8).
 

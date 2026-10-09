@@ -82,6 +82,15 @@ class Settings(BaseSettings):
     # Nunca usar api/v3/views/<id>/query.json: ignora $limit y devuelve ~36 MB.
     DATOS_GOV_RESOURCE_URL: str = "https://www.datos.gov.co/resource/s2ru-bqt6.json"
 
+    # ── WhatsApp Cloud API (Meta) ──
+    WHATSAPP_ENABLED: bool = True
+    WHATSAPP_TOKEN: str = ""
+    WHATSAPP_PHONE_NUMBER_ID: str = ""
+    WHATSAPP_VERIFY_TOKEN: str = ""
+    WHATSAPP_APP_SECRET: str = ""
+    WHATSAPP_PHONE_NUMBER: str = ""
+    WHATSAPP_API_VERSION: str = "v21.0"
+
     # Model Context Protocol (MCP) Config
     MCP_ENABLED: bool = True
 
