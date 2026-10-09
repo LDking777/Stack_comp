@@ -14,6 +14,7 @@ La fuente esta congelada desde 2022-11-21, por eso el cache en memoria.
 """
 import time
 import logging
+import re
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -34,6 +35,9 @@ logger = logging.getLogger(__name__)
 CAPACITY_COLUMN = "num_cantidad_capacidad_instalada"
 GROUP_CAPACITY_COLUMN = "nom_grupo_capacidad"
 PRESTADOR_COLUMN = "c_digo_prestador"
+IDENTIFIER_FILTER_COLUMNS = frozenset(
+    {"nit_ips", PRESTADOR_COLUMN, "nombre_prestador"}
+)
 ANALYTIC_COLUMNS = frozenset({
     "departamento",
     "municipio",
@@ -42,6 +46,7 @@ ANALYTIC_COLUMNS = frozenset({
     "nom_grupo_capacidad",
     "nom_descripcion_capacidad",
 })
+FILTER_COLUMNS = ANALYTIC_COLUMNS | IDENTIFIER_FILTER_COLUMNS
 ANALYTIC_RECORD_COLUMNS = (
     "departamento",
     "municipio",
@@ -50,6 +55,19 @@ ANALYTIC_RECORD_COLUMNS = (
     "nom_grupo_capacidad",
     "nom_descripcion_capacidad",
     CAPACITY_COLUMN,
+)
+IPS_DIRECTORY_COLUMNS = (
+    "c_digo_prestador",
+    "c_digo_sede",
+    "nombre_prestador",
+    "nom_sede_ips",
+    "direcci_n",
+    "municipio",
+    "departamento",
+    "naturaleza",
+    "num_nivel_atencion",
+    "nom_grupo_capacidad",
+    "nom_descripcion_capacidad",
 )
 
 # Operaciones deterministas que el servicio sabe ejecutar.
@@ -60,6 +78,7 @@ OPERATIONS = (
     "sum_capacity",
     "math",
     "list_distinct",
+    "list_ips",
 )
 
 _MODE = "agregacion_determinista_socrata"
@@ -85,6 +104,24 @@ _CACHE: Dict[str, tuple] = {}
 # insensible a acentos/case devolveria 0 filas.
 _MUNICIPIOS: Dict[str, str] = {}
 _MUNICIPIOS_TS = 0.0
+_PRESTADOR_NAMES: List[str] = []
+_PRESTADOR_NAMES_TS = 0.0
+_MUNICIPIO_DEPARTMENTS: Dict[str, List[tuple[str, str]]] = {}
+
+
+def _normalize_identifier_filter(column: str, value: Any) -> Optional[str]:
+    """Normalize public numeric identifiers to the representation in Socrata."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    if column in {"nit_ips", PRESTADOR_COLUMN}:
+        digits = re.sub(r"\D", "", text)
+        if not 6 <= len(digits) <= 15:
+            return None
+        if column == "nit_ips" and len(digits) == 10:
+            digits = digits[:-1]
+        return digits
+    return text[:160] or None
 
 
 def build_where(filters: Optional[Dict[str, Any]]) -> str:
@@ -171,13 +208,13 @@ class DatosGovService:
             }
 
         filters = normalize_filters(spec.get("filters") or {})
-        invalid_filters = set(filters) - ANALYTIC_COLUMNS
+        invalid_filters = set(filters) - FILTER_COLUMNS
         group_by = spec.get("group_by")
         metric = spec.get("metric") or CAPACITY_COLUMN
         if invalid_filters:
             return self._unsupported_query(
-                "Solo se permiten filtros analíticos agregados; no se consultan "
-                "códigos, nombres, NIT ni datos de contacto de IPS."
+                "Filtro no permitido. Solo se aceptan dimensiones analíticas y "
+                "NIT, código o nombre de prestador como filtros internos."
             )
         if group_by and group_by not in ANALYTIC_COLUMNS:
             return self._unsupported_query(
@@ -188,6 +225,37 @@ class DatosGovService:
             return self._unsupported_query(
                 "La única métrica numérica disponible es la cantidad de capacidad instalada."
             )
+
+        for column in IDENTIFIER_FILTER_COLUMNS:
+            if column not in filters:
+                continue
+            normalized_value = _normalize_identifier_filter(column, filters[column])
+            if normalized_value is None:
+                return self._unsupported_query(
+                    "El identificador proporcionado no tiene un formato válido."
+                )
+            filters[column] = normalized_value
+
+        if filters.get("nombre_prestador"):
+            resolved_name, ambiguous_name = await self._resolve_prestador_name(
+                filters["nombre_prestador"]
+            )
+            if ambiguous_name:
+                return {
+                    "status": "filtro_ambiguo",
+                    "detalle": (
+                        "El nombre coincide con más de un prestador. "
+                        "Usa el nombre completo, NIT o código para precisar la consulta."
+                    ),
+                    "modo": _MODE,
+                }
+            if resolved_name is None:
+                return {
+                    "status": "sin_coincidencias",
+                    "detalle": "No encontré coincidencias para el prestador indicado.",
+                    "modo": _MODE,
+                }
+            filters["nombre_prestador"] = resolved_name
 
         # Los municipios llegan en MAYUSCULAS y con acentos propios: se
         # resuelven contra el indice dinamico del dataset.
@@ -207,20 +275,29 @@ class DatosGovService:
 
         where = build_where(filters)
         clean_filters = {k: v for k, v in filters.items() if v}
+        public_filters = {
+            key: value for key, value in clean_filters.items()
+            if key in ANALYTIC_COLUMNS
+        }
 
         try:
+            if operation == "list_ips":
+                return await self._list_ips(
+                    where, public_filters, limit=int(spec.get("limit") or 50)
+                )
+
             if operation == "count_registros":
-                return await self._scalar(operation, "count(*)", where, clean_filters, "total_registros")
+                return await self._scalar(operation, "count(*)", where, public_filters, "total_registros")
 
             if operation == "count_prestadores":
                 return await self._scalar(
                     operation, f"count(distinct {PRESTADOR_COLUMN})", where,
-                    clean_filters, "total_prestadores",
+                    public_filters, "total_prestadores",
                 )
 
             if operation == "group_count":
                 return await self._grouped(
-                    spec, where, clean_filters,
+                    spec, where, public_filters,
                     aggregate="count(*)", value_key="registros",
                 )
 
@@ -231,27 +308,27 @@ class DatosGovService:
                 if not spec.get("group_by"):
                     return await self._scalar(
                         operation, f"sum({metric})", where,
-                        clean_filters, "total_capacidad",
+                        public_filters, "total_capacidad",
                     )
                 return await self._grouped(
-                    spec, where, clean_filters,
+                    spec, where, public_filters,
                     aggregate=f"sum({metric})",
                     value_key="capacidad",
                     grouped_key="total_capacidad",
                 )
 
             if operation == "math":
-                return await self._math(spec, where, clean_filters)
+                return await self._math(spec, where, public_filters)
 
             if operation == "list_distinct":
-                return await self._list_distinct(spec, where, clean_filters)
+                return await self._list_distinct(spec, where, public_filters)
 
         except Exception as e:
             logger.error("Fallo de datos.gov.co en %s: %s", operation, e)
             return {
                 "error": f"fuente_publica_no_disponible: {type(e).__name__}",
                 "status": "sin_datos",
-                "filtros_aplicados": clean_filters,
+                "filtros_aplicados": public_filters,
                 "modo": _MODE,
                 "detalle": (
                     "La API de datos.gov.co no respondio. Los numeros no se "
@@ -305,8 +382,9 @@ class DatosGovService:
             "nota": (
                 "Agregaciones ejecutadas por Socrata via SoQL; el LLM solo "
                 "narra. Análisis agregado por ubicación, naturaleza, nivel de "
-                "atención, grupo y descripción de capacidad; no se consultan "
-                "identificadores ni datos de contacto. Fuente con corte 2022-11-21."
+                "atención, grupo y descripción de capacidad. El directorio "
+                "muestra nombre/sede/dirección publicados, nunca NIT o códigos. "
+                "Fuente con corte 2022-11-21."
             ),
         }
 
@@ -491,6 +569,185 @@ class DatosGovService:
                 return value.strip()
 
         return _MUNICIPIOS.get(folded)
+
+    async def _resolve_prestador_name(
+        self, value: str
+    ) -> tuple[Optional[str], bool]:
+        """Resolve an exact or unique partial name without returning names to users."""
+        global _PRESTADOR_NAMES_TS
+        folded = fold(value)
+        if not folded:
+            return None, False
+
+        if (
+            not _PRESTADOR_NAMES
+            or (time.monotonic() - _PRESTADOR_NAMES_TS) > _MUNICIPIOS_TTL_S
+        ):
+            rows = await self._query(
+                {
+                    "$select": "nombre_prestador",
+                    "$group": "nombre_prestador",
+                    "$limit": 15000,
+                }
+            )
+            _PRESTADOR_NAMES.clear()
+            _PRESTADOR_NAMES.extend(
+                sorted(
+                    {
+                        str(row.get("nombre_prestador") or "").strip()
+                        for row in rows
+                        if row.get("nombre_prestador")
+                    }
+                )
+            )
+            _PRESTADOR_NAMES_TS = time.monotonic()
+
+        exact = [name for name in _PRESTADOR_NAMES if fold(name) == folded]
+        if len(exact) == 1:
+            return exact[0], False
+        matches = [name for name in _PRESTADOR_NAMES if folded in fold(name)]
+        if len(matches) == 1:
+            return matches[0], False
+        return None, len(matches) > 1
+
+    async def resolve_municipio_mention(
+        self, query: str
+    ) -> tuple[Optional[str], Optional[str], bool]:
+        """Resolve one municipality in a query, optionally disambiguating by department."""
+        global _MUNICIPIOS_TS
+        if (
+            not _MUNICIPIO_DEPARTMENTS
+            or (time.monotonic() - _MUNICIPIOS_TS) > _MUNICIPIOS_TTL_S
+        ):
+            rows = await self._query(
+                {
+                    "$select": "municipio,departamento",
+                    "$group": "municipio,departamento",
+                    "$limit": 5000,
+                }
+            )
+            _MUNICIPIO_DEPARTMENTS.clear()
+            for row in rows:
+                municipio = str(row.get("municipio") or "").strip()
+                departamento = str(row.get("departamento") or "").strip()
+                if municipio and departamento:
+                    _MUNICIPIO_DEPARTMENTS.setdefault(fold(municipio), []).append(
+                        (municipio, departamento)
+                    )
+            _MUNICIPIOS_TS = time.monotonic()
+
+        folded_query = fold(query)
+        municipality_matches = [
+            locations
+            for folded_name, locations in _MUNICIPIO_DEPARTMENTS.items()
+            if re.search(rf"(?<!\w){re.escape(folded_name)}(?!\w)", folded_query)
+        ]
+        if not municipality_matches:
+            return None, None, False
+
+        candidates = [location for locations in municipality_matches for location in locations]
+        mentioned_departments = {
+            fold(department)
+            for locations in _MUNICIPIO_DEPARTMENTS.values()
+            for _, department in locations
+            if re.search(rf"(?<!\w){re.escape(fold(department))}(?!\w)", folded_query)
+        }
+        if mentioned_departments:
+            candidates = [
+                candidate for candidate in candidates
+                if fold(candidate[1]) in mentioned_departments
+            ]
+
+        unique_candidates = list(dict.fromkeys(candidates))
+        if len(unique_candidates) == 1:
+            municipio, departamento = unique_candidates[0]
+            return municipio, departamento, False
+        return None, None, bool(unique_candidates)
+
+    async def _list_ips(
+        self, where: str, filters: Dict[str, Any], limit: int = 50
+    ) -> Dict[str, Any]:
+        """Return public facility directory fields, omitting all provider codes/NIT."""
+        group_columns = ",".join(IPS_DIRECTORY_COLUMNS)
+        params: Dict[str, Any] = {
+            "$select": (
+                "c_digo_prestador,c_digo_sede,nombre_prestador,nom_sede_ips,"
+                "direcci_n,municipio,departamento,naturaleza,num_nivel_atencion,"
+                "nom_grupo_capacidad,nom_descripcion_capacidad,"
+                f"sum({CAPACITY_COLUMN}) as capacidad"
+            ),
+            "$group": group_columns,
+            "$order": "nombre_prestador ASC,nom_sede_ips ASC",
+            "$limit": 5000,
+        }
+        if where:
+            params["$where"] = where
+
+        rows = await self._query(params)
+        facilities: Dict[tuple, Dict[str, Any]] = {}
+        for row in rows:
+            facility_key = (
+                row.get("c_digo_prestador"),
+                row.get("c_digo_sede"),
+                row.get("nombre_prestador"),
+                row.get("nom_sede_ips"),
+                row.get("direcci_n"),
+                row.get("municipio"),
+                row.get("departamento"),
+            )
+            facility = facilities.setdefault(
+                facility_key,
+                {
+                    "nombre": row.get("nombre_prestador"),
+                    "sede": row.get("nom_sede_ips"),
+                    "direccion": row.get("direcci_n"),
+                    "municipio": row.get("municipio"),
+                    "departamento": row.get("departamento"),
+                    "naturaleza": [],
+                    "niveles_atencion": [],
+                    "capacidades": [],
+                },
+            )
+            for field, value in (
+                ("naturaleza", row.get("naturaleza")),
+                ("niveles_atencion", row.get("num_nivel_atencion")),
+            ):
+                if value is not None and value not in facility[field]:
+                    facility[field].append(value)
+            capacity = {
+                "grupo": row.get("nom_grupo_capacidad"),
+                "tipo": row.get("nom_descripcion_capacidad"),
+                "cantidad": _parse_number(row.get("capacidad")),
+            }
+            if capacity not in facility["capacidades"]:
+                facility["capacidades"].append(capacity)
+
+        compare_capacity = bool(
+            {"nom_grupo_capacidad", "nom_descripcion_capacidad"}.intersection(filters)
+        )
+        ordered_facilities = sorted(
+            facilities.values(),
+            key=lambda facility: (
+                -sum(
+                    capacity["cantidad"]
+                    for capacity in facility["capacidades"]
+                    if isinstance(capacity.get("cantidad"), (int, float))
+                )
+                if compare_capacity
+                else 0,
+                str(facility.get("nombre") or ""),
+                str(facility.get("sede") or ""),
+            ),
+        )
+        requested_limit = min(max(limit, 1), 100)
+        return {
+            "establecimientos": ordered_facilities[:requested_limit],
+            "total_establecimientos": len(ordered_facilities),
+            "resultados_limitados": len(ordered_facilities) > requested_limit,
+            "fuente_registros_limitada": len(rows) == 5000,
+            "filtros_aplicados": filters,
+            "modo": _MODE,
+        }
 
 
 datosgov_service = DatosGovService()

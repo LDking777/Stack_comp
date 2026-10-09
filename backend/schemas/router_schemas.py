@@ -23,6 +23,7 @@ class QueryOperation(str, Enum):
     SUM_CAPACITY = "sum_capacity"            # sum(num_cantidad_capacidad_instalada)
     MATH = "math"                            # sum/avg/min/max sobre una columna numerica
     LIST_DISTINCT = "list_distinct"          # valores distintos de una columna con su conteo
+    LIST_IPS = "list_ips"                    # directorio de IPS/sedes por ubicación y servicio
 
 class QueryIntentParams(BaseModel):
     operation: QueryOperation = Field(
@@ -30,7 +31,8 @@ class QueryIntentParams(BaseModel):
             "Operacion determinista a ejecutar en datos.gov.co: 'count_registros' "
             "(total de filas), 'count_prestadores' (IPS distintas), 'group_count' "
             "(conteo por departamento/naturaleza/etc), 'sum_capacity' (capacidad "
-            "instalada), 'math' (promedio/max/min) o 'list_distinct' (listar valores)."
+            "instalada), 'math' (promedio/max/min), 'list_distinct' (listar valores) "
+            "o 'list_ips' (buscar sedes por filtros y devolver nombre/dirección/capacidades)."
         )
     )
     group_by: Optional[str] = Field(
@@ -70,6 +72,31 @@ class QueryIntentParams(BaseModel):
             "Subtipo de capacidad instalado según el valor real del dataset, "
             "por ejemplo 'Pediátrica', 'Urgencias', 'Sala de Cirugía' o "
             "'Cuidado Intensivo Neonatal'."
+        ),
+    )
+    nit_filter: Optional[str] = Field(
+        default=None,
+        max_length=32,
+        description=(
+            "NIT de una IPS, solo para filtrar internamente un agregado o directorio. "
+            "Nunca incluirlo en group_by, en la respuesta ni en los KPIs."
+        ),
+    )
+    codigo_prestador_filter: Optional[str] = Field(
+        default=None,
+        max_length=32,
+        description=(
+            "Código de prestador, solo como filtro interno de un agregado o directorio. "
+            "Nunca incluirlo en group_by, en la respuesta ni en los KPIs."
+        ),
+    )
+    nombre_prestador_filter: Optional[str] = Field(
+        default=None,
+        max_length=160,
+        description=(
+            "Nombre de IPS/prestador, filtro interno para encontrar la sede correcta. "
+            "En el directorio el nombre se devuelve como dato público; nunca usarlo "
+            "en group_by ni en un KPI agregado."
         ),
     )
     math_operation: Optional[MathOperation] = Field(
